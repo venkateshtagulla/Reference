@@ -1,1 +1,162 @@
 
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from config.settings import get_settings
+from routers.fastapi.main_router import api_router
+from utility.fastapi_error_handler import fastapi_api_error_handler
+from utility.errors import ApiError
+from starlette.responses import JSONResponse
+from starlette.requests import Request
+from utility.auth import verify_cognito_token
+from config.aws import get_table
+from config.core.tenant_context import TenantContext
+from config.settings import get_settings
+settings = get_settings()
+
+
+settings = get_settings()
+
+app = FastAPI(
+    title=settings.APP_NAME,
+    description=settings.APP_DESCRIPTION,
+    version=settings.APP_VERSION,
+    debug=settings.DEBUG
+)
+
+# Add CORS middleware for localhost:3000
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "*",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"]
+)
+AUTH_EXCLUDED_PATHS = {
+    "/admins/login",
+    "/admins/register",
+    "/inspectors/login",
+    "/inspectors/register",
+    "/crew/login",
+    "/crew/register",
+}
+@app.middleware("http")
+async def cognito_auth_middleware(request: Request, call_next):
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
+    path = request.url.path
+    host = request.headers.get("host", "")
+    tenant = host.split(".")[0]
+    tenant=settings.table
+    try:
+        table = get_table(tenant)
+    except Exception:
+        return JSONResponse(
+            status_code=404,
+            content={"detail": "Table not exist"},
+        )
+
+    # Attach table to request.state
+    request.state.tenant_ctx = TenantContext(
+        table=table,
+        sub=None,       # no sub yet
+        email=None,     # no email yet
+        role=None,      # no role yet
+        tenant=tenant
+    )
+    if (
+        path in AUTH_EXCLUDED_PATHS
+        or path.startswith("/docs")
+        or path.startswith("/openapi")
+    ):
+        return await call_next(request)
+
+    # Authorization header
+    auth_header = request.headers.get("authorization")
+    if not auth_header or not auth_header.lower().startswith("bearer "):
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Missing Authorization header"},
+        )
+
+    token = auth_header.split(" ", 1)[1]
+    #print("this is token--------------->",token)
+
+    # Verify Cognito JWT
+    try:
+        claims  = verify_cognito_token(token)
+       # print("this is claims--------------->",claims)
+    except Exception:
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Invalid or expired token"},
+        )
+    # print("this is token--------------->",token)
+    # print("this is claims--------------->",claims)
+    sub = claims.get("sub")
+    groups = claims.get("cognito:groups", [])
+    if not sub:
+        return JSONResponse(status_code=403, content={"msg": "Invalid token"})
+
+    if "admin" in groups:
+        role = "admin"
+    elif "inspector" in groups:
+        role = "inspector"
+    elif "crew" in groups:
+        role = "crew"
+    else:
+        return JSONResponse(403, {"msg": "Invalid role"})
+    host = request.headers.get("host", "")
+
+    tenant = host.split(".")[0]
+        
+    tenant=settings.table  
+    try:
+        table = get_table(tenant)
+    except Exception:
+        return JSONResponse(
+            status_code=404,
+            content={"detail": "Table not exist"},
+        )
+    resp = table.get_item(
+        Key={"PK": "USER", "SK": f"{role.upper()}#{sub}"}
+    )
+    user = resp.get("Item")
+    if not user:
+        return JSONResponse(403, {"msg": "User not registered"})
+           
+    email=user.get("email")
+    request.state.tenant_ctx = TenantContext(
+        table=table,
+        sub=sub,
+        email=email,
+        role=role,
+        tenant=tenant,
+    )
+
+    return await call_next(request)
+
+ # Register your custom error handler for ApiError here (comment or remove on production)
+app.add_exception_handler(ApiError, fastapi_api_error_handler)
+
+# Include all API routers
+app.include_router(api_router)
+
+
+
+@app.get("/")
+async def root():
+    """
+    Root endpoint - Public endpoint (no authentication required)
+    """
+    return {"message": "Welcome", "status": "running"}
+
+@app.get("/health")
+async def health_check():
+    """
+    Health check endpoint - Public endpoint (no authentication required)
+    """
+    return {"status": "healthy", "message": "API is running properly"}
