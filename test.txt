@@ -1,17 +1,21 @@
 """
-Service layer for sync operations.
+Service layer for vessel assignment operations.
 """
-from typing import Dict, Any, Optional
+from datetime import datetime
+from uuid import uuid4
+from typing import Dict, List, Any
 
-from repository.inspection_assignment_repository import InspectionAssignmentRepository
-from repository.inspection_form_repository import InspectionFormRepository
+from repository.crew_repository import CrewRepository
+from repository.inspector_repository import InspectorRepository
+from repository.vessel_assignment_repository import VesselAssignmentRepository
+from repository.vessel_repository import VesselRepository
 from utility.errors import ApiError
 from utility.logger import get_logger
 
 
-class SyncService:
+class VesselAssignmentService:
     """
-    Business logic for sync status checks.
+    Business logic for vessel assignment operations.
     """
 
     def __init__(self,table) -> None:
@@ -20,24 +24,141 @@ class SyncService:
         """
 
         self._logger = get_logger(self.__class__.__name__)
-        self._assignment_repo = InspectionAssignmentRepository(table)
-        self._form_repo = InspectionFormRepository(table)
+        self._repository = VesselAssignmentRepository(table)
+        self._vessel_repo = VesselRepository(table)
+        self._inspector_repo = InspectorRepository(table)
+        self._crew_repo = CrewRepository(table)
 
-    def get_sync_status(self, user_id: str) -> Dict[str, Any]:
+    def create_assignment(self, admin_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Get sync status for an inspector or crew member.
-        Checks all their assignments and forms to determine sync status.
+        Assign a crew member or inspector to a vessel.
         """
 
         try:
-            self._logger.info("Fetching sync status for user: %s", user_id)
+            vessel_id = payload.get("vessel_id")
+            user_id = payload.get("user_id")
+            user_type = payload.get("user_type")
+            
+            if not all([vessel_id, user_id, user_type]):
+                raise ApiError("Missing required fields", 400, "missing_fields")
 
-            # Get all assignments for this user
+            self._logger.info(
+                "Creating vessel assignment - vessel_id: %s, user_id: %s, user_type: %s",
+                vessel_id,
+                user_id,
+                user_type,
+            )
+
+            # Verify vessel exists
+            vessel = self._vessel_repo.get_item(vessel_id)
+            if not vessel:
+                raise ApiError("Vessel not found", 404, "vessel_not_found")
+
+            # Verify user exists
+            if user_type == "inspector":
+                user = self._inspector_repo.get_item(user_id)
+                if not user:
+                    raise ApiError("Inspector not found", 404, "inspector_not_found")
+            else:  # crew
+                user = self._crew_repo.get_item(user_id)
+                if not user:
+                    raise ApiError("Crew member not found", 404, "crew_not_found")
+
+            # Check if assignment already exists
+            assignments, _ = self._repository.list_by_vessel(
+                vessel_id=vessel_id,
+                limit=1000,
+            )
+            for existing in assignments:
+                if (
+                    existing.get("user_id") == user_id
+                    and existing.get("user_type") == user_type
+                ):
+                    raise ApiError(
+                        f"{user_type.capitalize()} already assigned to this vessel",
+                        409,
+                        "assignment_exists",
+                    )
+
+            # Create assignment
+            assignment_id = str(uuid4())
+            
+            now = datetime.utcnow().isoformat()
+            
+            assignment = {
+                "PK": f"VESSEL#{vessel_id}",
+                "SK": f"USER#{user_id}",
+                "assignment_id":user_id,
+                "vessel_id": vessel_id,
+                "user_id": user_id,
+                "user_type": user_type,
+                "created_by_admin_id": admin_id,
+                "created_at": now,
+                "updated_at": now
+            }
+            
+            self._repository.put_item(assignment)
+
+            # Get user name for response
+            user_name = None
+            if user_type == "inspector":
+                first_name = user.get("first_name", "")
+                last_name = user.get("last_name", "")
+                user_name = f"{first_name} {last_name}".strip() if first_name or last_name else None
+            else:
+                first_name = user.get("first_name", "")
+                last_name = user.get("last_name", "")
+                user_name = f"{first_name} {last_name}".strip() if first_name or last_name else None
+
+            response = {
+                "assignment_id": assignment["assignment_id"],
+                "vessel_id": assignment["vessel_id"],
+                "user_id": assignment["user_id"],
+                "user_type": assignment["user_type"],
+                "user_name": user_name,
+                "user_email": user.get("email"),
+                "created_by_admin_id": assignment["created_by_admin_id"],
+                "created_at": assignment["created_at"],
+                "updated_at": assignment["updated_at"],
+            }
+
+            self._logger.info(
+                "Created vessel assignment %s for vessel %s",
+                assignment["assignment_id"],
+                vessel_id,
+            )
+            return response
+        except ApiError:
+            raise
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            self._logger.error("Failed to create vessel assignment: %s", exc)
+            raise ApiError(
+                "Failed to create vessel assignment", 500, "create_assignment_failed"
+            ) from exc
+
+    def get_assignments(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Get all assignments for a vessel.
+        """
+
+        try:
+            vessel_id = payload.get("vessel_id")
+            if not vessel_id:
+                raise ApiError("vessel_id is required", 400, "missing_vessel_id")
+
+            self._logger.info("Fetching vessel assignments for vessel_id: %s", vessel_id)
+
+            # Verify vessel exists
+            vessel = self._vessel_repo.get_item(vessel_id)
+            if not vessel:
+                raise ApiError("Vessel not found", 404, "vessel_not_found")
+
+            # Get all assignments for this vessel
             assignments = []
             cursor = None
             while True:
-                batch, cursor = self._assignment_repo.list_by_assignee(
-                    assignee_id=user_id,
+                batch, cursor = self._repository.list_by_vessel(
+                    vessel_id=vessel_id,
                     limit=1000,
                     cursor=cursor,
                 )
@@ -47,52 +168,92 @@ class SyncService:
                 if len(assignments) >= 1000:  # Safety limit
                     break
 
-            # Count assignments by status
-            pending_uploads = 0
-            synced_forms = 0
-            last_synced_at: Optional[str] = None
-
+            # Build response with user details
+            assignment_responses: List[Dict[str, Any]] = []
             for assignment in assignments:
-                status = assignment.get("status", "").lower()
-                
-                # Check if assignment is synced (completed or submitted)
-                if status in ["completed", "submitted"]:
-                    synced_forms += 1
-                    # Track the most recent sync time
-                    updated_at = assignment.get("updated_at")
-                    if updated_at:
-                        if not last_synced_at or updated_at > last_synced_at:
-                            last_synced_at = updated_at
-                else:
-                    # Assignment is pending (assigned, in_progress, etc.)
-                    pending_uploads += 1
-                
-                # Also check form's last_synced_at if available
-                form_id = assignment.get("form_id")
-                if form_id:
+                user_id = assignment.get("user_id")
+                user_type = assignment.get("user_type")
+
+                user_name = None
+                user_email = None
+
+                if user_type == "inspector":
                     try:
-                        form = self._form_repo.get_item(form_id)
-                        if form:
-                            form_sync_time = form.get("last_synced_at")
-                            if form_sync_time:
-                                if not last_synced_at or form_sync_time > last_synced_at:
-                                    last_synced_at = form_sync_time
+                        user = self._inspector_repo.get_item(user_id)
+                        if user:
+                            first_name = user.get("first_name", "")
+                            last_name = user.get("last_name", "")
+                            user_name = (
+                                f"{first_name} {last_name}".strip()
+                                if first_name or last_name
+                                else None
+                            )
+                            user_email = user.get("email")
                     except Exception:
-                        # Ignore errors when fetching form
+                        pass
+                else:  # crew
+                    try:
+                        user = self._crew_repo.get_item(user_id)
+                        if user:
+                            first_name = user.get("first_name", "")
+                            last_name = user.get("last_name", "")
+                            user_name = (
+                                f"{first_name} {last_name}".strip()
+                                if first_name or last_name
+                                else None
+                            )
+                            user_email = user.get("email")
+                    except Exception:
                         pass
 
-            # Failed syncs would typically be tracked separately, but for now we'll set to 0
-            failed_syncs = 0
+                assignment_responses.append({
+                    "assignment_id": assignment.get("assignment_id"),
+                    "vessel_id": assignment.get("vessel_id"),
+                    "user_id": assignment.get("user_id"),
+                    "user_type": assignment.get("user_type"),
+                    "user_name": user_name,
+                    "user_email": user_email,
+                    "created_by_admin_id": assignment.get("created_by_admin_id"),
+                    "created_at": assignment.get("created_at"),
+                    "updated_at": assignment.get("updated_at"),
+                })
 
-            return {
-                "pending_uploads": pending_uploads,
-                "synced_forms": synced_forms,
-                "failed_syncs": failed_syncs,
-                "last_synced_at": last_synced_at,
-                "is_online": True,
+            response = {
+                "vessel_id": vessel_id,
+                "assignments": assignment_responses,
             }
+
+            return response
         except ApiError:
             raise
         except Exception as exc:  # pylint: disable=broad-exception-caught
-            self._logger.error("Failed to fetch sync status: %s", exc)
-            raise ApiError("Failed to fetch sync status", 500, "sync_status_failed") from exc
+            self._logger.error("Failed to get vessel assignments: %s", exc)
+            raise ApiError(
+                "Failed to get vessel assignments", 500, "get_assignments_failed"
+            ) from exc
+
+    def delete_assignment(self, vessel_id:str,assignment_id: str) -> Dict[str, Any]:
+        """
+        Delete a vessel assignment by assignment_id.
+        """
+
+        try:
+            self._logger.info("Deleting vessel assignment %s", assignment_id)
+
+            # Verify assignment exists
+            assignment = self._repository.get_item(vessel_id,assignment_id)
+            if not assignment:
+                raise ApiError("Assignment not found", 404, "assignment_not_found")
+
+            # Delete the assignment
+            self._repository.delete_item(vessel_id,assignment_id)
+
+            self._logger.info("Deleted vessel assignment %s", assignment_id)
+            return {"assignment_id": assignment_id, "deleted": True}
+        except ApiError:
+            raise
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            self._logger.error("Failed to delete vessel assignment: %s", exc)
+            raise ApiError(
+                "Failed to delete vessel assignment", 500, "delete_assignment_failed"
+            ) from exc
