@@ -1,241 +1,98 @@
-from datetime import datetime
-from typing import Dict, Optional, Any
-from repository.inspector_repository import InspectorRepository
+"""
+Service layer for sync operations.
+"""
+from typing import Dict, Any, Optional
+
+from repository.inspection_assignment_repository import InspectionAssignmentRepository
+from repository.inspection_form_repository import InspectionFormRepository
 from utility.errors import ApiError
 from utility.logger import get_logger
-from config.aws import get_cognito_client
-from utility.auth import verify_cognito_token
-from config.settings import get_settings
-from dotenv import load_dotenv
-load_dotenv()
-settings = get_settings()
 
-cognito_client = get_cognito_client()
 
-class InspectorService:
+class SyncService:
     """
-    Business logic for inspector onboarding and authentication (Cognito-based).
+    Business logic for sync status checks.
     """
 
-    def __init__(self, repository: InspectorRepository):
-        self._repository = repository
+    def __init__(self,table) -> None:
+        """
+        Initialize the service with repository dependencies.
+        """
+
         self._logger = get_logger(self.__class__.__name__)
+        self._assignment_repo = InspectionAssignmentRepository(table)
+        self._form_repo = InspectionFormRepository(table)
 
-    # ---------------------------------------------------------
-    # REGISTER INSPECTOR
-    # ---------------------------------------------------------
-    def register_inspector(self, payload: Dict[str, Any],tenant:str) -> Dict[str, Any]:
+    def get_sync_status(self, user_id: str) -> Dict[str, Any]:
+        """
+        Get sync status for an inspector or crew member.
+        Checks all their assignments and forms to determine sync status.
+        """
+
         try:
-            email = payload.get("email", "").strip().lower()
-            password = payload.get("password")
-            confirm_password = payload.get("confirm_password")
+            self._logger.info("Fetching sync status for user: %s", user_id)
 
-            if not email or not password:
-                raise ApiError("Email and password are required", 400, "missing_fields")
-
-            if password != confirm_password:
-                raise ApiError("Password and confirm password do not match", 400, "password_mismatch")
-
-            existing = self._repository.get_by_email(email)
-            if existing:
-                raise ApiError("Email already registered", 409, "email_exists")
-
-            now = datetime.utcnow().isoformat()
-
-            # Create Cognito user
-            cognito_client.admin_create_user(
-                UserPoolId=settings.cognito_user_pool_id,
-                Username=email,
-                UserAttributes=[
-                    {"Name": "email", "Value": email},
-                    {"Name": "email_verified", "Value": "True"},
-                    {"Name": "custom:tenant", "Value": tenant},
-                    {"Name": "custom:role", "Value": "inspector"},
-                ],
-                TemporaryPassword=password,
-                MessageAction="SUPPRESS"
-            )
-
-            cognito_client.admin_set_user_password(
-                UserPoolId=settings.cognito_user_pool_id,
-                Username=email,
-                Password=password,
-                Permanent=True
-            )
-
-            cognito_client.admin_add_user_to_group(
-                UserPoolId=settings.cognito_user_pool_id,
-                Username=email,
-                GroupName="inspector"
-            )
-
-            # Authenticate user to get tokens
-            tokens = cognito_client.admin_initiate_auth(
-                UserPoolId=settings.cognito_user_pool_id,
-                ClientId=settings.cognito_client_id,
-                AuthFlow="ADMIN_NO_SRP_AUTH",
-                AuthParameters={"USERNAME": email, "PASSWORD": password}
-            ).get("AuthenticationResult")
-
-            # Use Cognito sub as inspector_id
-            inspector_id = verify_cognito_token(tokens["AccessToken"])["sub"]
-
-            # Store in DB
-            self._repository.put_item({
-                "PK": "USER",
-                "SK": f"INSPECTOR#{inspector_id}",
-                "inspector_id": inspector_id,
-                "first_name": payload.get("first_name"),
-                "last_name": payload.get("last_name"),
-                "email": email,
-                "phone_number": payload.get("phone_number"),
-                "first_login": False,
-                "role": "Inspector",
-                "status": "ACTIVE",
-                "entity": "INSPECTOR",
-                "created_at": now,
-                "updated_at": now,
-            })
-
-            self._logger.info("Inspector %s registered", inspector_id)
-
-            return {
-                "inspector_id": inspector_id,
-                "email": email,
-                "tokens": tokens
-            }
-
-        except ApiError:
-            raise
-        except Exception as e:
-            self._logger.error("Failed to register inspector: %s", e)
-            raise ApiError("Failed to register inspector", 500, "register_inspector_failed")
-
-    # ---------------------------------------------------------
-    # LOGIN INSPECTOR
-    # ---------------------------------------------------------
-    def login_inspector(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        try:
-            email = payload.get("email", "").strip().lower()
-            password = payload.get("password")
-            new_password = payload.get("new_password")
-
-            if not email or not password:
-                raise ApiError("Email and password are required", 400, "missing_credentials")
-
-            tokens = cognito_client.admin_initiate_auth(
-                UserPoolId=settings.cognito_user_pool_id,
-                ClientId=settings.cognito_client_id,
-                AuthFlow="ADMIN_NO_SRP_AUTH",
-                AuthParameters={"USERNAME": email, "PASSWORD": password}
-            ).get("AuthenticationResult")
-
-            inspector_id = verify_cognito_token(tokens["AccessToken"])["sub"]
-
-            # Check DB record, create if first login
-            record = self._repository.get_item(inspector_id)
-            
-            if record.get("first_login"):
-                if not new_password:
-                    return {"first_login": True}
-
-                cognito_client.admin_set_user_password(
-                    UserPoolId=settings.cognito_user_pool_id,
-                    Username=email,
-                    Password=new_password,
-                    Permanent=True
+            # Get all assignments for this user
+            assignments = []
+            cursor = None
+            while True:
+                batch, cursor = self._assignment_repo.list_by_assignee(
+                    assignee_id=user_id,
+                    limit=1000,
+                    cursor=cursor,
                 )
+                assignments.extend(batch)
+                if not cursor:
+                    break
+                if len(assignments) >= 1000:  # Safety limit
+                    break
 
-                self._repository.update_item(
-                    inspector_id,
-                    {"first_login": False, "updated_at": datetime.utcnow().isoformat()}
-                )
+            # Count assignments by status
+            pending_uploads = 0
+            synced_forms = 0
+            last_synced_at: Optional[str] = None
 
-                tokens = cognito_client.admin_initiate_auth(
-                    UserPoolId=settings.cognito_user_pool_id,
-                    ClientId=settings.cognito_client_id,
-                    AuthFlow="ADMIN_NO_SRP_AUTH",
-                    AuthParameters={"USERNAME": email, "PASSWORD": new_password}
-                ).get("AuthenticationResult")
+            for assignment in assignments:
+                status = assignment.get("status", "").lower()
+                
+                # Check if assignment is synced (completed or submitted)
+                if status in ["completed", "submitted"]:
+                    synced_forms += 1
+                    # Track the most recent sync time
+                    updated_at = assignment.get("updated_at")
+                    if updated_at:
+                        if not last_synced_at or updated_at > last_synced_at:
+                            last_synced_at = updated_at
+                else:
+                    # Assignment is pending (assigned, in_progress, etc.)
+                    pending_uploads += 1
+                
+                # Also check form's last_synced_at if available
+                form_id = assignment.get("form_id")
+                if form_id:
+                    try:
+                        form = self._form_repo.get_item(form_id)
+                        if form:
+                            form_sync_time = form.get("last_synced_at")
+                            if form_sync_time:
+                                if not last_synced_at or form_sync_time > last_synced_at:
+                                    last_synced_at = form_sync_time
+                    except Exception:
+                        # Ignore errors when fetching form
+                        pass
 
-            self._logger.info("Inspector %s logged in", inspector_id)
-
-            return {
-                "inspector_id": inspector_id,
-                "email": email,
-                "tokens": tokens
-            }
-
-        except ApiError:
-            raise
-        except Exception as e:
-            self._logger.error("Inspector login failed: %s", e)
-            raise ApiError("Inspector login failed", 500, "login_inspector_failed")
-
-    # ---------------------------------------------------------
-    # GET PROFILE
-    # ---------------------------------------------------------
-    def get_profile(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        try:
-            inspector_id = payload.get("inspector_id")
-            if not inspector_id:
-                raise ApiError("Inspector ID is required", 400, "missing_inspector_id")
-
-            record = self._repository.get_item(inspector_id)
-            if not record:
-                raise ApiError("Inspector not found", 404, "inspector_not_found")
-
-            return {
-                "inspector_id": record["inspector_id"],
-                "first_name": record.get("first_name"),
-                "last_name": record.get("last_name"),
-                "email": record["email"],
-                "phone_number": record.get("phone_number"),
-                "role": record.get("role")
-            }
-
-        except ApiError:
-            raise
-        except Exception as e:
-            self._logger.error("Failed to fetch inspector profile: %s", e)
-            raise ApiError("Failed to fetch profile", 500, "get_profile_failed")
-
-    # ---------------------------------------------------------
-    # GET PROFILE BY ID
-    # ---------------------------------------------------------
-    def get_profile_by_id(self, inspector_id: str, email: Optional[str] = None) -> Dict[str, Any]:
-        try:
-            record = self._repository.get_item(inspector_id)
-
-            if not record and email:
-                self._logger.warning(
-                    "Inspector not found by ID %s, trying email %s",
-                    inspector_id,
-                    email,
-                )
-                record = self._repository.get_by_email(email)
-
-                if record and record.get("inspector_id") != inspector_id:
-                    raise ApiError(
-                        "Token inspector ID does not match database record",
-                        401,
-                        "token_id_mismatch"
-                    )
-
-            if not record:
-                raise ApiError("Inspector not found", 404, "inspector_not_found")
+            # Failed syncs would typically be tracked separately, but for now we'll set to 0
+            failed_syncs = 0
 
             return {
-                "inspector_id": record["inspector_id"],
-                "first_name": record.get("first_name"),
-                "last_name": record.get("last_name"),
-                "email": record["email"],
-                "phone_number": record.get("phone_number"),
-                "role": record.get("role")
+                "pending_uploads": pending_uploads,
+                "synced_forms": synced_forms,
+                "failed_syncs": failed_syncs,
+                "last_synced_at": last_synced_at,
+                "is_online": True,
             }
-
         except ApiError:
             raise
-        except Exception as e:
-            self._logger.error("Failed to fetch inspector profile: %s", e)
-            raise ApiError("Failed to fetch profile", 500, "get_profile_failed")
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            self._logger.error("Failed to fetch sync status: %s", exc)
+            raise ApiError("Failed to fetch sync status", 500, "sync_status_failed") from exc
