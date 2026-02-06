@@ -1,572 +1,847 @@
 """
-Service layer for dashboard operations.
+Service layer for defect operations.
 """
-from typing import Dict, List, Optional, Any
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
-from datetime import datetime, timedelta, timezone
-
-from repository.admin_repository import AdminRepository
 from repository.crew_repository import CrewRepository
 from repository.defect_repository import DefectRepository
-from repository.inspection_assignment_repository import InspectionAssignmentRepository
 from repository.inspection_form_repository import InspectionFormRepository
 from repository.inspector_repository import InspectorRepository
 from repository.vessel_repository import VesselRepository
 from utility.errors import ApiError
 from utility.logger import get_logger
+from utility.s3_utils import sign_s3_url_if_possible
 
 
-class DashboardService:
+class DefectService:
     """
-    Business logic for dashboard data aggregation.
+    Business logic for defect management operations.
     """
 
-    def __init__(self,table) -> None:
+    def __init__(self, repository: DefectRepository,table) -> None:
         """
-        Initialize the service with repository dependencies.
+        Initialize the service with its repository dependency.
         """
 
+        self._repository = repository
         self._logger = get_logger(self.__class__.__name__)
+        # Lazy-init related repositories
         self._vessel_repo = VesselRepository(table)
-        self._defect_repo = DefectRepository(table)
-        self._form_repo = InspectionFormRepository(table)
         self._inspector_repo = InspectorRepository(table)
         self._crew_repo = CrewRepository(table)
-        self._admin_repo = AdminRepository(table)
-        self._assignment_repo = InspectionAssignmentRepository(table)
+        self._form_repo = InspectionFormRepository(table)
 
-    def get_dashboard_data(self, admin_id: str) -> Dict[str, Any]:
+    def _build_related_vessel(self, vessel_id: Optional[str]) -> Optional[Dict[str, Any]]:
         """
-        Aggregate dashboard data including summary cards, recent activities, defect severity, and vessel summaries.
+        Fetch and map minimal vessel information.
         """
 
-        try:
-            self._logger.info("Fetching dashboard data for admin: %s", admin_id)
+        if not vessel_id:
+            return None
+        vessel_item = self._vessel_repo.get_item(vessel_id)
+        if not vessel_item:
+            vessel_item = {} # Fallback to avoid error if vessel deleted
+        
+        return {
+            "vessel_id": vessel_item.get("vessel_id", vessel_id),
+            "name": vessel_item.get("name"),
+            "imo_number": vessel_item.get("imo_number"),
+        }
 
-            # Get all vessels (scanned) - filter by admin if needed (for now get all)
-            all_vessels, _ = self._vessel_repo.list_items(limit=1000)
-            # Filter by admin_id if needed (for multi-admin scenarios)
-            admin_vessels = [v for v in all_vessels if v.get("admin_id") == admin_id]
-            total_vessels = len(admin_vessels) if admin_vessels else len(all_vessels)
+    def _build_related_user(
+        self,
+        user_id: Optional[str],
+        user_type: str,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Fetch and map minimal user information (inspector or crew).
+        """
 
-            # Get all defects (scanned)
-            all_defects, _ = self._defect_repo.list_items(limit=1000)
-            open_defects = [d for d in all_defects if d.get("status", "open") == "open"]
-            open_defects_count = len(open_defects)
+        if not user_id:
+            return None
 
-            # Get all forms (scanned) - completed audits
-            all_forms, _ = self._form_repo.list_items(limit=1000)
-            # Filter forms by admin_id if needed
-            admin_forms = [f for f in all_forms if f.get("created_by_admin_id") == admin_id]
-            completed_audits = [f for f in (admin_forms if admin_forms else all_forms) if f.get("status", "pending") == "completed"]
-            completed_audits_count = len(completed_audits)
-
-            # Calculate defect severity breakdown
-            critical = 0
-            major = 0
-            medium = 0
-            minor = 0
-            
-            for defect in all_defects:
-                severity = defect.get("severity", "minor").lower()
-                if severity == "critical":
-                    critical += 1
-                elif severity == "major":
-                    major += 1
-                elif severity == "medium":
-                    medium += 1
-                else:
-                    minor += 1
-            
-            severity_breakdown = {
-                "critical": critical,
-                "major": major,
-                "medium": medium,
-                "minor": minor
-            }
-
-            # Build vessel summaries with defect and audit counts
-            vessel_summaries: List[Dict[str, Any]] = []
-            vessel_id_to_name = {v.get("vessel_id"): v.get("name") for v in all_vessels}
-
-            # Count defects per vessel
-            defects_by_vessel: Dict[str, int] = {}
-            for defect in all_defects:
-                vessel_id = defect.get("vessel_id")
-                if vessel_id and vessel_id != "unassigned":
-                    defects_by_vessel[vessel_id] = defects_by_vessel.get(vessel_id, 0) + 1
-
-            # Count completed audits (forms) per vessel
-            audits_by_vessel: Dict[str, int] = {}
-            for form in completed_audits:
-                vessel_id = form.get("vessel_id")
-                if vessel_id and vessel_id != "unassigned":
-                    audits_by_vessel[vessel_id] = audits_by_vessel.get(vessel_id, 0) + 1
-
-            # Build vessel summaries (use admin_vessels if filtered, otherwise all)
-            vessels_for_summary = admin_vessels if admin_vessels else all_vessels
-            for vessel in vessels_for_summary[:10]:  # Limit to top 10 vessels for dashboard
-                vessel_id = vessel.get("vessel_id")
-                vessel_summaries.append({
-                        "vessel_id": vessel_id,
-                        "vessel_name": vessel.get("name"),
-                        "defects_count": defects_by_vessel.get(vessel_id, 0),
-                        "audits_count": audits_by_vessel.get(vessel_id, 0),
-                        "last_updated": vessel.get("updated_at"),
-                })
-
-            # Build recent activities from defects and forms
-            recent_activities: List[Dict[str, Any]] = []
-            
-            # Helper to get user name
-            def get_user_name(user_id: Optional[str], user_type: Optional[str]) -> Optional[str]:
-                """Get user name from inspector or crew ID."""
-                if not user_id:
-                    return None
-                try:
-                    if user_type == "inspector" or not user_type:
-                        inspector = self._inspector_repo.get_item(user_id)
-                        if inspector:
-                            first_name = inspector.get("first_name", "")
-                            last_name = inspector.get("last_name", "")
-                            return f"{first_name} {last_name}".strip() if first_name or last_name else None
-                    if user_type == "crew":
-                        crew = self._crew_repo.get_item(user_id)
-                        if crew:
-                            first_name = crew.get("first_name", "")
-                            last_name = crew.get("last_name", "")
-                            return f"{first_name} {last_name}".strip() if first_name or last_name else None
-                except Exception:
-                    return None
+        if user_type == "inspector":
+            item = self._inspector_repo.get_item(user_id)
+            if not item:
                 return None
-            
-            # Get recent defect activities
-            for defect in sorted(all_defects, key=lambda x: x.get("updated_at", ""), reverse=True)[:10]:
-                vessel_id = defect.get("vessel_id")
-                vessel_name = vessel_id_to_name.get(vessel_id) if vessel_id and vessel_id != "unassigned" else None
-                
-                # Create activity from defect creation/updates
-                status = defect.get("status", "open")
-                title = defect.get("title", "Defect")
-                raised_by = defect.get("raised_by_inspector_id") or defect.get("raised_by_crew_id")
-                raised_by_type = "inspector" if defect.get("raised_by_inspector_id") else "crew" if defect.get("raised_by_crew_id") else None
-                user_name = get_user_name(raised_by, raised_by_type)
-                
-                if status == "open":
-                    if vessel_name:
-                        activity_text = f"New defect reported - {title} - {vessel_name}"
-                    else:
-                        activity_text = f"New defect reported - {title}"
-                elif status == "resolved":
-                    activity_text = f"Defect resolved - pending approval"
-                else:
-                    if vessel_name:
-                        activity_text = f"Defect {status} - {title} - {vessel_name}"
-                    else:
-                        activity_text = f"Defect {status} - {title}"
-                
-                recent_activities.append({
-                        "action": activity_text,
-                        "timestamp": defect.get("updated_at") or defect.get("created_at", ""),
-                        "vessel_name": vessel_name,
-                        "user_name": user_name,
-                })
-
-            # Get recent form submissions - try to find assignments to get submitter info
-            for form in sorted(completed_audits, key=lambda x: x.get("updated_at", ""), reverse=True)[:5]:
-                vessel_id = form.get("vessel_id")
-                vessel_name = vessel_id_to_name.get(vessel_id) if vessel_id and vessel_id != "unassigned" else None
-                form_title = form.get("title", "Form")
-                form_id = form.get("form_id")
-                
-                # Try to find assignment for this form to get inspector name
-                
-                submitted_by_name = None
-                try:
-                    assignments, _ = self._assignment_repo.list_by_form(form_id=form_id, limit=1)
-                    if assignments:
-                        assignment = assignments[0]
-                        assignee_id = assignment.get("assignee_id")
-                        assignee_type = assignment.get("assignee_type", "inspector")
-                        submitted_by_name = get_user_name(assignee_id, assignee_type)
-                except Exception:
-                    pass  # Ignore errors when fetching assignment
-                
-                # Build activity text
-                if submitted_by_name and vessel_name:
-                    activity_text = f"Form submitted by {submitted_by_name} - {vessel_name}"
-                elif submitted_by_name:
-                    activity_text = f"Form submitted by {submitted_by_name} - {form_title}"
-                elif vessel_name:
-                    activity_text = f"Form submitted - {form_title} - {vessel_name}"
-                else:
-                    activity_text = f"Form submitted - {form_title}"
-                
-                recent_activities.append({
-                        "action": activity_text,
-                        "timestamp": form.get("updated_at") or form.get("created_at", ""),
-                        "vessel_name": vessel_name,
-                        "user_name": submitted_by_name,
-                })
-
-            # Sort activities by timestamp and limit to 10 most recent
-            recent_activities.sort(key=lambda x: x["timestamp"] or "", reverse=True)
-            recent_activities = recent_activities[:10]
-
-            # Build summary cards (percentage changes are placeholders - can be calculated with historical data)
-            summary_cards = [
-                {
-                    "label": "Total Vessels",
-                    "value": total_vessels,
-                    "change_percentage": 0.0,  # TODO: Calculate from historical data
-                    "trend": "up",
-                },
-                {
-                    "label": "Open defects",
-                    "value": open_defects_count,
-                    "change_percentage": 0.0,  # TODO: Calculate from historical data
-                    "trend": "down",
-                },
-                {
-                    "label": "Completed Audits",
-                    "value": completed_audits_count,
-                    "change_percentage": 0.0,  # TODO: Calculate from historical data
-                    "trend": "up",
-                },
-            ]
-
+            first_name = item.get("first_name", "")
+            last_name = item.get("last_name", "")
+            name = f"{first_name} {last_name}".strip() if first_name or last_name else None
             return {
-                "summary_cards": summary_cards,
-                "recent_activities": recent_activities,
-                "defect_severity": severity_breakdown,
-                "vessels": vessel_summaries,
+                "user_id": item["inspector_id"],
+                "name": name,
+                "email": item.get("email"),
+                "user_type": "inspector",
             }
-        except ApiError:
-            raise
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            self._logger.error("Failed to fetch dashboard data: %s", exc)
-            raise ApiError("Failed to fetch dashboard data", 500, "dashboard_fetch_failed") from exc
 
-    def get_inspector_dashboard(self, inspector_id: str) -> Dict[str, Any]:
+        if user_type == "crew":
+            item = self._crew_repo.get_item(user_id)
+            if not item:
+                return None
+            first_name = item.get("first_name", "")
+            last_name = item.get("last_name", "")
+            name = f"{first_name} {last_name}".strip() if first_name or last_name else None
+            return {
+                "user_id": item["crew_id"],
+                "name": name,
+                "email": item.get("email"),
+                "user_type": "crew",
+            }
+
+        return None
+
+    def _build_related_form(self, form_id: Optional[str]) -> Optional[Dict[str, Any]]:
         """
-        Get dashboard data for an inspector including task counts and assigned defects.
+        Fetch and map minimal form information.
+        """
+
+        if not form_id:
+            return None
+        form_item = self._form_repo.get_item(form_id)
+        if not form_item:
+            return None
+        return {
+            "form_id": form_item["form_id"],
+            "title": form_item.get("title"),
+        }
+
+    def _add_activity(self, existing_activities: Optional[List[Dict[str, str]]], action: str, performed_by: Optional[str] = None) -> List[Dict[str, str]]:
+        """
+        Add an activity entry to the task activities list.
+        """
+
+        activities = existing_activities or []
+        new_activity = {
+            "action": action,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+        if performed_by:
+            new_activity["performed_by"] = performed_by
+        activities.append(new_activity)
+        return activities
+
+    def _add_admin_comment(self, existing_comments: Optional[List[str]], comment: str) -> List[str]:
+        """
+        Add an admin comment to the comments list.
+        """
+
+        comments = existing_comments or []
+        if comment:
+            comments.append(comment)
+        return comments
+
+    def _item_to_response(self, item: Dict) -> Dict[str, Any]:
+        """
+        Convert DynamoDB item to dictionary response with expanded relations.
+        """
+
+        vessel = self._build_related_vessel(item.get("vessel_id"))
+        form = self._build_related_form(item.get("form_id"))
+        raised_by_inspector = self._build_related_user(item.get("raised_by_inspector_id"), "inspector")
+        raised_by_crew = self._build_related_user(item.get("raised_by_crew_id"), "crew")
+        assigned_inspector = self._build_related_user(item.get("assigned_inspector_id"), "inspector")
+        assigned_crew = self._build_related_user(item.get("assigned_crew_id"), "crew")
+
+        # Sign photo URLs to ensure they open in browser
+        photos = item.get("photos") or []
+        signed_photos = [sign_s3_url_if_possible(url) or url for url in photos]
+        
+        analysis_photos = item.get("analysis_photos") or []
+        signed_analysis_photos = [sign_s3_url_if_possible(url) or url for url in analysis_photos]
+        
+        return {
+            "defect_id": item["defect_id"],
+            "vessel_id": item["vessel_id"],
+            "name":vessel.get("name"),
+            "form_id": item.get("form_id"),
+            "assignment_id": item.get("assignment_id"),
+            "title": item["title"],
+            "description": item.get("description"),
+            "severity": item.get("severity", "minor"),
+            "priority": item.get("priority", "medium"),
+            "status": item.get("status", "open"),
+            "location_on_ship": item.get("location_on_ship"),
+            "equipment_name": item.get("equipment_name"),
+            "raised_by_inspector_id": item.get("raised_by_inspector_id"),
+            "raised_by_crew_id": item.get("raised_by_crew_id"),
+            "assigned_inspector_id": item.get("assigned_inspector_id"),
+            "assigned_crew_id": item.get("assigned_crew_id"),
+            "triggered_question_order": item.get("triggered_question_order"),
+            "triggered_question_text": item.get("triggered_question_text"),
+            "photos": signed_photos if signed_photos else None,
+            "inspector_comments": item.get("inspector_comments"),
+            "crew_comments": item.get("crew_comments"),
+            "admin_comments": item.get("admin_comments"),
+            "task_activities": item.get("task_activities"),
+            "due_date": item.get("due_date"),
+            "analysis_root_cause": item.get("analysis_root_cause"),
+            "analysis_impact_assessment": item.get("analysis_impact_assessment"),
+            "analysis_recurrence_probability": item.get("analysis_recurrence_probability"),
+            "analysis_notes": item.get("analysis_notes"),
+            "analysis_photos": signed_analysis_photos if signed_analysis_photos else None,
+            "analysis_by_inspector_id": item.get("analysis_by_inspector_id"),
+            "analysis_by_crew_id": item.get("analysis_by_crew_id"),
+            "analysis_created_at": item.get("analysis_created_at"),
+            "analysis_updated_at": item.get("analysis_updated_at"),
+            "resolved_at": item.get("resolved_at"),
+            "closed_at": item.get("closed_at"),
+            "approved_by_admin_id": item.get("approved_by_admin_id"),
+            "closed_by_admin_id": item.get("closed_by_admin_id"),
+            "created_at": item.get("created_at"),
+            "updated_at": item.get("updated_at"),
+            "detailed_description": item.get("detailed_description"),
+            "type_of_event": item.get("type_of_event"),
+            "immediate_causes_substandard_acts": item.get("immediate_causes_substandard_acts"),
+            "immediate_causes_substandard_conditions": item.get("immediate_causes_substandard_conditions"),
+            "basic_causes_personal_factors": item.get("basic_causes_personal_factors"),
+            "basic_causes_job_system_factors": item.get("basic_causes_job_system_factors"),
+            "corrective_action": item.get("corrective_action"),
+            "preventive_action": item.get("preventive_action"),
+            "lessons_learnt": item.get("lessons_learnt"),
+            "vessel": vessel,
+            "form": form,
+            "raised_by_inspector": raised_by_inspector,
+            "raised_by_crew": raised_by_crew,
+            "assigned_inspector": assigned_inspector,
+            "assigned_crew": assigned_crew,
+            "cost_claims": item.get("cost_claims"),
+        }
+
+    # ---------------------------------------------------------------------
+    # Creation from inspector / crew
+    # ---------------------------------------------------------------------
+
+    def _create_defect_for_user(
+        self,
+        *,
+        payload: Dict[str, Any],
+        raised_by_inspector_id: Optional[str],
+        raised_by_crew_id: Optional[str],
+    ) -> Dict[str, Any]:
+        """
+        Shared helper to create a defect raised by an inspector or crew member.
         """
 
         try:
-            self._logger.info("Fetching dashboard data for inspector: %s", inspector_id)
-
-            # Get all assignments for this inspector
-            assignments = []
-            cursor = None
-            while True:
-                batch, cursor = self._assignment_repo.list_by_assignee(
-                    assignee_id=inspector_id,
-                    limit=1000,
-                    cursor=cursor,
-                )
-                assignments.extend(batch)
-                if not cursor:
-                    break
-                if len(assignments) >= 1000:  # Safety limit
-                    break
-
-            # Count assignments by status
-            task_assigned = len(assignments)
-            task_completed = sum(
-                1
-                for a in assignments
-                if a.get("status") in ["completed", "submitted"]
-            )
-            pending = sum(
-                1
-                for a in assignments
-                if a.get("status") in ["assigned", "in_progress"]
+            vessel_id = payload.get("vessel_id")
+            form_id = payload.get("form_id")
+            print("when creating Defect:----------------",vessel_id)
+            
+            self._logger.info(
+                "Creating defect for vessel=%s form=%s raised_by_inspector=%s raised_by_crew=%s",
+                vessel_id,
+                form_id,
+                raised_by_inspector_id,
+                raised_by_crew_id,
             )
 
-            # Calculate due soon (assignments due within 7 days)
-            now = datetime.utcnow()
-            seven_days_later = now + timedelta(days=7)
-            due_soon = 0
-            for assignment in assignments:
-                due_date_str = assignment.get("due_date")
-                if due_date_str and assignment.get("status") not in [
-                    "completed",
-                    "submitted",
-                ]:
-                    try:
-                        # Handle different datetime formats
-                        if due_date_str.endswith("Z"):
-                            due_date_str = due_date_str.replace("Z", "+00:00")
-                        elif "+" not in due_date_str and "-" in due_date_str:
-                            # Assume UTC if no timezone
-                            due_date_str = due_date_str + "+00:00"
-                        due_date = datetime.fromisoformat(due_date_str)
-                        # Make due_date timezone-aware if it's naive
-                        if due_date.tzinfo is None:
-                            due_date = due_date.replace(tzinfo=timezone.utc)
-                        # Make now timezone-aware for comparison
-                        if now.tzinfo is None:
-                            now = now.replace(tzinfo=timezone.utc)
-                        if now <= due_date <= seven_days_later:
-                            due_soon += 1
-                    except (ValueError, AttributeError, TypeError) as e:
-                        self._logger.warning(
-                            "Failed to parse due_date %s: %s", due_date_str, e
-                        )
-                        continue
+            # Optional: validate that form exists and belongs to the vessel (only if form_id is provided)
+            if form_id:
+                form = self._form_repo.get_item(form_id)
+                if not form:
+                    raise ApiError("Inspection form not found", 404, "form_not_found")
 
-            # Get defects assigned to or raised by this inspector
-            all_defects = []
-            cursor = None
-            while True:
-                batch, cursor = self._defect_repo.list_items(limit=1000, cursor=cursor)
-                all_defects.extend(batch)
-                if not cursor:
-                    break
-                if len(all_defects) >= 1000:  # Safety limit
-                    break
-            
-            # Include defects assigned to inspector OR raised by inspector
-            assigned_defects = [
-                d
-                for d in all_defects
-                if (
-                    d.get("assigned_inspector_id") == inspector_id
-                    or d.get("raised_by_inspector_id") == inspector_id
-                )
-                and d.get("status") != "closed"
-            ]
+                if vessel_id != form.get("vessel_id"):
+                    self._logger.warning(
+                        "Defect create: payload vessel_id %s does not match form %s vessel_id %s",
+                        vessel_id,
+                        form_id,
+                        form.get("vessel_id"),
+                    )
 
-            # Get admin names for "assigned by" field
-            defect_summaries: List[Dict[str, Any]] = []
-            # Sort by created_at descending to get most recent first
-            sorted_defects = sorted(
-                assigned_defects,
-                key=lambda x: x.get("created_at", ""),
-                reverse=True,
-            )[:10]  # Limit to 10 most recent
+            assigned_inspector_id: Optional[str] = None
+            assigned_crew_id: Optional[str] = None
+            if payload.get("assignee_id") and payload.get("assignee_type"):
+                if payload.get("assignee_type") == "inspector":
+                    assigned_inspector_id = payload.get("assignee_id")
+                elif payload.get("assignee_type") == "crew":
+                    assigned_crew_id = payload.get("assignee_id")
+            vessel_id=payload.get("vessel_id")
             
-            for defect in sorted_defects:
-                # Try to get admin name who assigned (from assignment or form)
-                assigned_by_name = None
+            now = datetime.utcnow().isoformat()
+            defect_id = str(uuid4())
+            pk=f"DEFECT#{defect_id}"
+            if raised_by_inspector_id:
+                gsi3pk = raised_by_inspector_id
+            elif raised_by_crew_id:
+                gsi3pk = raised_by_crew_id
+            else:
+                gsi3pk = None  
+            defect_dict = {
+                "PK":f"VESSEL#{vessel_id}",
+                "SK":pk,
+                "defect_id": defect_id,
+                "vessel_id": vessel_id,
+                "form_id": payload.get("form_id"),
+                "assignment_id": payload.get("assignment_id"),
+                "title": payload.get("title"),
+                "description": payload.get("description"),
+                "severity": payload.get("severity"),
+                "priority": payload.get("priority"),
+                "status": "open",
+                "entity":"DEFECT",
+                "location_on_ship": payload.get("location_on_ship"),
+                "equipment_name": payload.get("equipment_name"),
+                "raised_by_inspector_id": raised_by_inspector_id,
+                "raised_by_crew_id": raised_by_crew_id,
+                "assigned_inspector_id": assigned_inspector_id,
+                "assigned_crew_id": assigned_crew_id,
+                "photos": payload.get("photos"),
+                "due_date": payload.get("due_date"),
+                "created_at": now,
+                "updated_at": now,
+                "GSI1PK":"DEFECT",
+                "GSI1SK":gsi3pk,
+                # "GSI2PK":payload.get("vessel_id"),
+                # "GSI2SK":payload.get("title"),
+                # "GSI3PK":gsi3pk,
+                # "GSI3SK":payload.get("title"),
                 
-                # If defect was raised by this inspector, show inspector name
-                if defect.get("raised_by_inspector_id") == inspector_id:
-                    inspector = self._inspector_repo.get_item(inspector_id)
-                    if inspector:
-                        first_name = inspector.get("first_name", "")
-                        last_name = inspector.get("last_name", "")
-                        assigned_by_name = (
-                            f"{first_name} {last_name}".strip()
-                            if first_name or last_name
-                            else "You"
-                        )
-                    else:
-                        assigned_by_name = "You"
-                else:
-                    # Defect was assigned to inspector, get admin who assigned it
-                    assignment_id = defect.get("assignment_id")
-                    if assignment_id:
-                        try:
-                            assignment = self._assignment_repo.get_item(assignment_id)
-                            if assignment:
-                                admin_id = assignment.get("created_by_admin_id")
-                                if admin_id:
-                                    admin = self._admin_repo.get_item(admin_id)
-                                    if admin:
-                                        first_name = admin.get("first_name", "")
-                                        last_name = admin.get("last_name", "")
-                                        assigned_by_name = (
-                                            f"{first_name} {last_name}".strip()
-                                            if first_name or last_name
-                                            else "Admin"
-                                        )
-                                    else:
-                                        assigned_by_name = "Admin"
-                        except Exception:
-                            pass
-
-                defect_summaries.append({
-                        "defect_id": defect.get("defect_id"),
-                        "title": defect.get("title", "Untitled Defect"),
-                        "location": defect.get("location_on_ship"),
-                        "assigned_by": assigned_by_name or "System",
-                        "priority": defect.get("priority", "medium"),
-                })
-
-            return {
-                "task_assigned": task_assigned,
-                "task_completed": task_completed,
-                "pending": pending,
-                "due_soon": due_soon,
-                "defects": defect_summaries,
             }
+            
+            # Remove None values
+            defect_dict = {k: v for k, v in defect_dict.items() if v is not None}
+
+            self._repository.put_item(defect_dict)
+            if form_id:
+                self._logger.info("Created defect %s for form %s", defect_id, form_id)
+            else:
+                self._logger.info("Created defect %s without form for vessel %s", defect_id, vessel_id)
+
+            return self._item_to_response(defect_dict)
         except ApiError:
             raise
         except Exception as exc:  # pylint: disable=broad-exception-caught
-            self._logger.error("Failed to fetch inspector dashboard: %s", exc)
-            raise ApiError(
-                "Failed to fetch inspector dashboard", 500, "inspector_dashboard_failed"
-            ) from exc
+            self._logger.error("Failed to create defect: %s", exc)
+            raise ApiError("Failed to create defect", 500, "create_defect_failed") from exc
 
-    def get_crew_dashboard(self, crew_id: str) -> Dict[str, Any]:
+    def create_defect_for_inspector(self, inspector_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Get dashboard data for a crew member including task counts and assigned defects.
+        Create a defect raised by an inspector (mobile / web app).
+        """
+        print("I got this from frontend--------",payload.get("vessel_id"))
+        return self._create_defect_for_user(
+            payload=payload,
+            raised_by_inspector_id=inspector_id,
+            raised_by_crew_id=None,
+        )
+
+    def create_defect_for_crew(self, crew_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create a defect raised by a crew member (mobile app).
+        """
+
+        return self._create_defect_for_user(
+            payload=payload,
+            raised_by_inspector_id=None,
+            raised_by_crew_id=crew_id,
+        )
+
+    # ---------------------------------------------------------------------
+    # Listing for inspector / crew
+    # ---------------------------------------------------------------------
+
+    def _list_defects_for_user(
+        self,
+        *,
+        raised_field: str,
+        user_id: str,
+        payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Shared helper to list defects raised by a specific inspector/crew with pagination.
         """
 
         try:
-            self._logger.info("Fetching dashboard data for crew: %s", crew_id)
-
-            # Get all assignments for this crew member
-            assignments = []
-            cursor = None
-            while True:
-                batch, cursor = self._assignment_repo.list_by_assignee(
-                    assignee_id=crew_id,
-                    limit=1000,
-                    cursor=cursor,
-                )
-                assignments.extend(batch)
-                if not cursor:
-                    break
-                if len(assignments) >= 1000:  # Safety limit
-                    break
-
-            # Count assignments by status
-            task_assigned = len(assignments)
-            task_completed = sum(
-                1
-                for a in assignments
-                if a.get("status") in ["completed", "submitted"]
-            )
-            pending = sum(
-                1
-                for a in assignments
-                if a.get("status") in ["assigned", "in_progress"]
-            )
-
-            # Calculate due soon (assignments due within 7 days)
-            now = datetime.utcnow()
-            seven_days_later = now + timedelta(days=7)
-            due_soon = 0
-            for assignment in assignments:
-                due_date_str = assignment.get("due_date")
-                if due_date_str and assignment.get("status") not in [
-                    "completed",
-                    "submitted",
-                ]:
-                    try:
-                        # Handle different datetime formats
-                        if due_date_str.endswith("Z"):
-                            due_date_str = due_date_str.replace("Z", "+00:00")
-                        elif "+" not in due_date_str and "-" in due_date_str:
-                            # Assume UTC if no timezone
-                            due_date_str = due_date_str + "+00:00"
-                        due_date = datetime.fromisoformat(due_date_str)
-                        # Make due_date timezone-aware if it's naive
-                        if due_date.tzinfo is None:
-                            due_date = due_date.replace(tzinfo=timezone.utc)
-                        # Make now timezone-aware for comparison
-                        if now.tzinfo is None:
-                            now = now.replace(tzinfo=timezone.utc)
-                        if now <= due_date <= seven_days_later:
-                            due_soon += 1
-                    except (ValueError, AttributeError, TypeError) as e:
-                        self._logger.warning(
-                            "Failed to parse due_date %s: %s", due_date_str, e
-                        )
-                        continue
-
-            # Get defects assigned to or raised by this crew member
-            all_defects = []
-            cursor = None
-            while True:
-                batch, cursor = self._defect_repo.list_items(limit=1000, cursor=cursor)
-                all_defects.extend(batch)
-                if not cursor:
-                    break
-                if len(all_defects) >= 1000:  # Safety limit
-                    break
+            page = payload.get("page", 1)
+            limit = payload.get("limit", 20)
+            status = payload.get("status")
+            vessel_id = payload.get("vessel_id")
             
-            # Include defects assigned to crew OR raised by crew
-            assigned_defects = [
-                d
-                for d in all_defects
-                if (
-                    d.get("assigned_crew_id") == crew_id
-                    or d.get("raised_by_crew_id") == crew_id
+            fetch_limit = limit + 1
+            cursor_dict = None
+
+            for _ in range(1, page):
+                _, last_key = self._repository.list_by_raised_user(
+                    raised_field=raised_field,
+                    user_id=user_id,
+                    status=status,
+                    vessel_id=vessel_id,
+                    limit=limit,
+                    cursor=cursor_dict,
                 )
-                and d.get("status") != "closed"
+                if not last_key:
+                    return {
+                        "items": [],
+                        "page": page,
+                        "limit": limit,
+                        "has_next": False,
+                    }
+                cursor_dict = last_key
+
+            items, _ = self._repository.list_by_raised_user(
+                raised_field=raised_field,
+                user_id=user_id,
+                status=status,
+                vessel_id=vessel_id,
+                limit=fetch_limit,
+                cursor=cursor_dict,
+            )
+
+            has_next = len(items) > limit
+            items = items[: limit] if has_next else items
+
+            defects = [
+                self._item_to_response(item) for item in items
             ]
 
-            # Get admin names for "assigned by" field
-            defect_summaries: List[Dict[str, Any]] = []
-            # Sort by created_at descending to get most recent first
-            sorted_defects = sorted(
-                assigned_defects,
-                key=lambda x: x.get("created_at", ""),
-                reverse=True,
-            )[:10]  # Limit to 10 most recent
-            
-            for defect in sorted_defects:
-                # Try to get admin name who assigned (from assignment or form)
-                assigned_by_name = None
-                
-                # If defect was raised by this crew member, show crew name
-                if defect.get("raised_by_crew_id") == crew_id:
-                    crew = self._crew_repo.get_item(crew_id)
-                    if crew:
-                        first_name = crew.get("first_name", "")
-                        last_name = crew.get("last_name", "")
-                        assigned_by_name = (
-                            f"{first_name} {last_name}".strip()
-                            if first_name or last_name
-                            else "You"
-                        )
-                    else:
-                        assigned_by_name = "You"
-                else:
-                    # Defect was assigned to crew, get admin who assigned it
-                    assignment_id = defect.get("assignment_id")
-                    if assignment_id:
-                        try:
-                            assignment = self._assignment_repo.get_item(assignment_id)
-                            if assignment:
-                                admin_id = assignment.get("created_by_admin_id")
-                                if admin_id:
-                                    admin = self._admin_repo.get_item(admin_id)
-                                    if admin:
-                                        first_name = admin.get("first_name", "")
-                                        last_name = admin.get("last_name", "")
-                                        assigned_by_name = (
-                                            f"{first_name} {last_name}".strip()
-                                            if first_name or last_name
-                                            else "Admin"
-                                        )
-                                    else:
-                                        assigned_by_name = "Admin"
-                        except Exception:
-                            pass
-
-                defect_summaries.append({
-                        "defect_id": defect.get("defect_id"),
-                        "title": defect.get("title", "Untitled Defect"),
-                        "location": defect.get("location_on_ship"),
-                        "assigned_by": assigned_by_name or "System",
-                        "priority": defect.get("priority", "medium"),
-                })
-
             return {
-                "task_assigned": task_assigned,
-                "task_completed": task_completed,
-                "pending": pending,
-                "due_soon": due_soon,
-                "defects": defect_summaries,
+                "items": defects,
+                "page": page,
+                "limit": limit,
+                "has_next": has_next,
             }
         except ApiError:
             raise
         except Exception as exc:  # pylint: disable=broad-exception-caught
-            self._logger.error("Failed to fetch crew dashboard: %s", exc)
-            raise ApiError(
-                "Failed to fetch crew dashboard", 500, "crew_dashboard_failed"
-            ) from exc
+            self._logger.error("Failed to list defects for user %s: %s", user_id, exc)
+            raise ApiError("Failed to list defects", 500, "list_defects_failed") from exc
+
+    def list_defects_for_inspector(self, inspector_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        List defects raised by the authenticated inspector.
+        """
+
+        return self._list_defects_for_user(
+            raised_field="raised_by_inspector_id",
+            user_id=inspector_id,
+            payload=payload,
+        )
+
+    def list_defects_for_crew(self, crew_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        List defects raised by the authenticated crew member.
+        """
+
+        return self._list_defects_for_user(
+            raised_field="raised_by_crew_id",
+            user_id=crew_id,
+            payload=payload,
+        )
+
+    # ---------------------------------------------------------------------
+    # Analysis for inspector / crew
+    # ---------------------------------------------------------------------
+
+    def _add_analysis_for_user(
+        self,
+        *,
+        actor_type: str,
+        actor_id: str,
+        payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Add or update analysis information for a defect on behalf of an inspector or crew member.
+        """
+
+        try:
+            defect_id = payload.get("defect_id")
+            root_cause = payload.get("root_cause")
+            impact_assessment = payload.get("impact_assessment")
+            recurrence_probability = payload.get("recurrence_probability")
+            notes = payload.get("notes")
+            photos = payload.get("photos")
+            vessel_id=payload.get("vessel_id")
+            print("payload data ---------",payload)
+            
+            if not defect_id:
+                 raise ApiError("Missing defect_id", 400, "missing_defect_id")
+
+            self._logger.info(
+                "Adding defect analysis for defect_id=%s by %s=%s",
+                defect_id,
+                actor_type,
+                actor_id,
+            )
+
+            existing = self._repository.get_item(vessel_id,defect_id)
+            if not existing:
+                raise ApiError("Defect not found", 404, "defect_not_found")
+
+            # Merge new photos with existing analysis photos, if any.
+            existing_photos = existing.get("analysis_photos") or []
+            new_photos = photos or []
+            merged_photos = list(existing_photos) + [p for p in new_photos if p not in existing_photos]
+
+            now = datetime.utcnow().isoformat()
+
+            update_attributes: Dict[str, Any] = {
+                '''"analysis_root_cause": root_cause,
+                "analysis_impact_assessment": impact_assessment,
+                "analysis_recurrence_probability": recurrence_probability,
+                "analysis_notes": notes,
+                "analysis_photos": merged_photos or None,
+                "analysis_updated_at": now,'''
+                "analysis_root_cause": root_cause,
+                "analysis_impact_assessment": impact_assessment,
+                "analysis_recurrence_probability": recurrence_probability,
+                "analysis_notes": notes,
+                "analysis_photos": merged_photos or None,
+                "detailed_description": payload.get("detailed_description"),
+                "type_of_event": payload.get("type_of_event"),
+                "immediate_causes_substandard_acts": payload.get("immediate_causes_substandard_acts"),
+                "immediate_causes_substandard_conditions": payload.get("immediate_causes_substandard_conditions"),
+                "basic_causes_personal_factors": payload.get("basic_causes_personal_factors"),
+                "basic_causes_job_system_factors": payload.get("basic_causes_job_system_factors"),
+                "corrective_action": payload.get("corrective_action"),
+                "preventive_action": payload.get("preventive_action"),
+                "lessons_learnt": payload.get("lessons_learnt"),
+                "cost_claims": payload.get("cost_claims"), 
+                "analysis_updated_at": now,
+            }
+            
+            # Remove None values
+            update_attributes = {k: v for k, v in update_attributes.items() if v is not None}
+
+            if not existing.get("analysis_created_at"):
+                update_attributes["analysis_created_at"] = now
+
+            if actor_type == "inspector":
+                update_attributes["analysis_by_inspector_id"] = actor_id
+            elif actor_type == "crew":
+                update_attributes["analysis_by_crew_id"] = actor_id
+
+            # Add activity log entry
+            activity_label = f"Defect analysis updated by {actor_type}"
+            activities = self._add_activity(existing.get("task_activities"), activity_label, actor_id)
+            update_attributes["task_activities"] = activities
+
+            updated_item = self._repository.update_item(vessel_id,defect_id, update_attributes)
+            return self._item_to_response(updated_item)
+        except ApiError:
+            raise
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            self._logger.error("Failed to update defect analysis: %s", exc)
+            raise ApiError("Failed to update defect analysis", 500, "update_defect_analysis_failed") from exc
+
+    def add_defect_analysis_for_inspector(self, inspector_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Add or update defect analysis submitted by an inspector.
+        """
+
+        return self._add_analysis_for_user(
+            actor_type="inspector",
+            actor_id=inspector_id,
+            payload=payload,
+        )
+
+    def add_defect_analysis_for_crew(self, crew_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Add or update defect analysis submitted by a crew member.
+        """
+
+        return self._add_analysis_for_user(
+            actor_type="crew",
+            actor_id=crew_id,
+            payload=payload,
+        )
+
+    def list_defects(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        List defects with pagination and optional filtering.
+        """
+
+        try:
+            page = payload.get("page", 1)
+            limit = payload.get("limit", 20)
+            status = payload.get("status")
+            vessel_id = payload.get("vessel_id")
+            
+            fetch_limit = limit + 1
+            cursor_dict = None
+
+            # For page > 1, walk through previous pages
+            for _ in range(1, page):
+                _, last_key = self._repository.list_items(
+                    status=status,
+                    vessel_id=vessel_id,
+                    limit=limit,
+                    cursor=cursor_dict,
+                )
+                if not last_key:
+                    return {
+                        "items": [],
+                        "page": page,
+                        "limit": limit,
+                        "has_next": False,
+                    }
+                cursor_dict = last_key
+
+            items, last_evaluated_key = self._repository.list_items(
+                status=status,
+                vessel_id=vessel_id,
+                limit=fetch_limit,
+                cursor=cursor_dict,
+            )
+
+            has_next = len(items) > limit
+            items = items[: limit] if has_next else items
+
+            defects = [
+                self._item_to_response(item) for item in items
+            ]
+
+            return {
+                "items": defects,
+                "page": page,
+                "limit": limit,
+                "has_next": has_next,
+            }
+        except ApiError:
+            raise
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            self._logger.error("Failed to list defects: %s", exc)
+            raise ApiError("Failed to list defects", 500, "list_defects_failed") from exc
+
+    def get_defect(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Retrieve a single defect by ID.
+        """
+
+        try:
+            defect_id = payload.get("defect_id")
+            vessel_id=payload.get("vessel_id")
+            
+            if not defect_id:
+                 raise ApiError("Missing defect_id", 400, "missing_defect_id")
+
+            self._logger.info("Fetching defect: %s", defect_id)
+            item = self._repository.get_item(vessel_id,defect_id)
+            if not item:
+                raise ApiError("Defect not found", 404, "defect_not_found")
+            print("details_____________________________________________")
+            print(self._item_to_response(item))
+            print("details_____________________________________________")
+            return self._item_to_response(item)
+        except ApiError:
+            raise
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            self._logger.error("Failed to fetch defect: %s", exc)
+            raise ApiError("Failed to fetch defect", 500, "get_defect_failed") from exc
+
+    def approve_defect(self, admin_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Approve a defect resolution.
+        Changes status to 'closed' and records approval.
+        """
+
+        try:
+            defect_id = payload.get("defect_id")
+            vessel_id=payload.get("vessel_id")
+            comment = payload.get("comment")
+            
+            if not defect_id:
+                 raise ApiError("Missing defect_id", 400, "missing_defect_id")
+            
+            self._logger.info("Approving defect %s by admin %s", defect_id, admin_id)
+            existing = self._repository.get_item(vessel_id,defect_id)
+            if not existing:
+                raise ApiError("Defect not found", 404, "defect_not_found")
+
+            current_status = existing.get("status", "open")
+            if current_status == "closed":
+                raise ApiError(
+                    "Defect is already closed",
+                    400,
+                    "defect_already_closed",
+                )
+
+            # Add admin comment if provided
+            admin_comments = existing.get("admin_comments", [])
+            if comment:
+                admin_comments = self._add_admin_comment(admin_comments, comment)
+
+            # Add activity log
+            activities = self._add_activity(
+                existing.get("task_activities"),
+                f"Defect approved by admin",
+                admin_id,
+            )
+
+            # Update defect
+            update_attributes = {
+                "status": "approved",
+                "approved_by_admin_id": admin_id,
+                "approved_at": datetime.utcnow().isoformat(),
+                "admin_comments": admin_comments,
+                "task_activities": activities,
+            }
+
+            updated_item = self._repository.update_item(vessel_id,defect_id, update_attributes)
+            return self._item_to_response(updated_item)
+        except ApiError:
+            raise
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            self._logger.error("Failed to approve defect: %s", exc)
+            raise ApiError("Failed to approve defect", 500, "approve_defect_failed") from exc
+
+    def add_comment(self, admin_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Add an admin comment to a defect.
+        """
+
+        try:
+            defect_id = payload.get("defect_id")
+            vessel_id=payload.get("vessel_id")
+            comment = payload.get("comment")
+            
+            if not defect_id or not comment:
+                 raise ApiError("Missing defect_id or comment", 400, "missing_fields")
+
+            self._logger.info("Adding comment to defect %s by admin %s", defect_id, admin_id)
+            existing = self._repository.get_item(vessel_id,defect_id)
+            if not existing:
+                raise ApiError("Defect not found", 404, "defect_not_found")
+
+            # Add admin comment
+            admin_comments = existing.get("admin_comments", [])
+            admin_comments = self._add_admin_comment(admin_comments, comment)
+
+            # Add activity log
+            comment_preview = comment[:50] + "..." if len(comment) > 50 else comment
+            activities = self._add_activity(
+                existing.get("task_activities"),
+                f"Admin comment added: {comment_preview}",
+                admin_id,
+            )
+
+            # Update defect
+            update_attributes = {
+                "admin_comments": admin_comments,
+                "task_activities": activities,
+            }
+
+            updated_item = self._repository.update_item(vessel_id,defect_id, update_attributes)
+            return self._item_to_response(updated_item)
+        except ApiError:
+            raise
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            self._logger.error("Failed to add comment to defect: %s", exc)
+            raise ApiError("Failed to add comment to defect", 500, "add_comment_failed") from exc
+
+    def close_defect(self, admin_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Close a defect.
+        Changes status to 'closed' without requiring resolution.
+        """
+
+        try:
+            defect_id = payload.get("defect_id")
+            vessel_id=payload.get("vessel_id")
+            comment = payload.get("comment")
+
+            if not defect_id:
+                 raise ApiError("Missing defect_id", 400, "missing_defect_id")
+            
+            self._logger.info("Closing defect %s by admin %s", defect_id, admin_id)
+            existing = self._repository.get_item(vessel_id,defect_id)
+            if not existing:
+                raise ApiError("Defect not found", 404, "defect_not_found")
+
+            current_status = existing.get("status", "open")
+            if current_status == "closed":
+                raise ApiError("Defect is already closed", 400, "defect_already_closed")
+
+            # Add admin comment if provided
+            admin_comments = existing.get("admin_comments", [])
+            if comment:
+                admin_comments = self._add_admin_comment(admin_comments, comment)
+
+            # Add activity log
+            activities = self._add_activity(
+                existing.get("task_activities"),
+                f"Defect closed by admin",
+                admin_id,
+            )
+
+            # Update defect
+            update_attributes = {
+                "status": "closed",
+                "closed_by_admin_id": admin_id,
+                "closed_at": datetime.utcnow().isoformat(),
+                "admin_comments": admin_comments,
+                "task_activities": activities,
+            }
+
+            updated_item = self._repository.update_item(vessel_id,defect_id, update_attributes)
+            return self._item_to_response(updated_item)
+        except ApiError:
+            raise
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            self._logger.error("Failed to close defect: %s", exc)
+            raise ApiError("Failed to close defect", 500, "close_defect_failed") from exc
+
+    def update_defect(self, admin_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Update defect fields (severity, priority, status, assignments, due_date, description).
+        """
+
+        try:
+            defect_id = payload.get("defect_id")
+            vessel_id=payload.get("vessel_id")
+            if not defect_id:
+                 raise ApiError("Missing defect_id", 400, "missing_defect_id")
+            
+            self._logger.info("Updating defect %s by admin %s", defect_id, admin_id)
+            existing = self._repository.get_item(vessel_id,defect_id)
+            if not existing:
+                raise ApiError("Defect not found", 404, "defect_not_found")
+
+            # Build update attributes from provided fields
+            update_attributes: Dict[str, Any] = {}
+            
+            severity = payload.get("severity")
+            priority = payload.get("priority")
+            status = payload.get("status")
+            assigned_inspector_id = payload.get("assigned_inspector_id")
+            assigned_crew_id = payload.get("assigned_crew_id")
+            due_date = payload.get("due_date")
+            description = payload.get("description")
+
+            if severity is not None:
+                update_attributes["severity"] = severity
+            if priority is not None:
+                update_attributes["priority"] = priority
+            if status is not None:
+                update_attributes["status"] = status
+            if assigned_inspector_id is not None:
+                update_attributes["assigned_inspector_id"] = assigned_inspector_id
+            if assigned_crew_id is not None:
+                update_attributes["assigned_crew_id"] = assigned_crew_id
+            if due_date is not None:
+                update_attributes["due_date"] = due_date
+            if description is not None:
+                update_attributes["description"] = description
+
+            if not update_attributes:
+                raise ApiError("At least one field must be provided for update", 400, "no_fields_provided")
+
+            # Add activity log for status changes
+            if status and status != existing.get("status"):
+                activities = self._add_activity(
+                    existing.get("task_activities"),
+                    f"Defect status changed to {status}",
+                    admin_id,
+                )
+                update_attributes["task_activities"] = activities
+
+            # Update defect
+            updated_item = self._repository.update_item(vessel_id,defect_id, update_attributes)
+            return self._item_to_response(updated_item)
+        except ApiError:
+            raise
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            self._logger.error("Failed to update defect: %s", exc)
+            raise ApiError("Failed to update defect", 500, "update_defect_failed") from exc
