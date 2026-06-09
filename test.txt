@@ -93,6 +93,9 @@ from routers.lambda_module.inspection_assignment import (
     request_inspector_inspection_extension_handler,  
     request_crew_inspection_extension_handler,  
     review_inspection_extension_handler,
+    add_admin_comment_to_assignment_handler,
+    add_inspector_comment_to_assignment_handler,
+    add_crew_comment_to_assignment_handler,
 )
 from routers.lambda_module.defect import (
     list_defects_handler,
@@ -122,7 +125,17 @@ from routers.lambda_module.defect import (
     download_inspector_defect_reports_handler,  
     download_inspector_defect_excel_handler,  
     download_crew_defect_reports_handler,  
-    download_crew_defect_excel_handler,  
+    download_crew_defect_excel_handler,
+    download_defect_excel_handler, 
+    download_defect_pdf_with_filters_handler,
+    list_vessel_defects_handler,
+    get_fleet_statistics_handler,
+    get_vessels_with_statistics_handler,
+    get_inspector_fleet_statistics_handler,
+    get_inspector_vessels_with_statistics_handler,
+    get_crew_fleet_statistics_handler,
+    get_crew_vessels_with_statistics_handler
+     
 )
 from routers.lambda_module.notifications_handler import (
     create_notification_handler,
@@ -160,6 +173,17 @@ from routers.lambda_module.vessel_certificates import (
     delete_certificate_handler,
     get_certificate_handler,
     list_certificates_handler,
+)
+from routers.lambda_module.incident_handler import (
+    get_vessels_for_dropdown_handler,
+    create_incident_handler,
+    update_incident_handler,
+    get_incident_handler,
+    list_incidents_by_vessel_handler,
+    delete_incident_handler,
+    get_vessel_incident_stats_handler,
+    get_fleet_incident_stats_handler,
+    export_incident_pdf_handler,
 )
 
 from routers.lambda_module.upload import presign_upload_handler
@@ -701,6 +725,20 @@ async def get_crew_assignment_route(
     event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "assignment_id": assignment_id})
     result = get_inspection_assignment_handler(event, None)
     return parse_lambda_response(result)
+
+@crew_router.post("/assignments/{vessel_id}/{assignment_id}/comments", summary="Add Comment to Assignment (Crew)")
+async def crew_add_assignment_comment_route(
+    vessel_id: str,
+    assignment_id: str,
+    request: Request,
+    tenant_ctx = Depends(require_role("crew","admin","inspector")),
+    authorization: Optional[str] = Header(None)
+):
+    """Add crew comment to inspection assignment."""
+    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "assignment_id": assignment_id})
+    result = add_crew_comment_to_assignment_handler(event, None)
+    return parse_lambda_response(result)
+
 @crew_router.get("/{crew_id}", summary="Get Crew Member")
 async def get_crew_route(crew_id: str, request: Request, tenant_ctx = Depends(require_role("admin","crew"))):
     """Get crew member details by ID."""
@@ -972,6 +1010,19 @@ async def get_assignment_route(vessel_id: str, assignment_id: str, request: Requ
     result = get_inspection_assignment_handler(event, None)
     return parse_lambda_response(result)
 
+@assignment_router.post("/{vessel_id}/{assignment_id}/comments", summary="Add Comment to Inspection Assignment (Admin)")
+async def add_assignment_comment_route(
+    vessel_id: str, 
+    assignment_id: str, 
+    request: Request, 
+    tenant_ctx = Depends(require_role("admin")),
+    authorization: Optional[str] = Header(None)
+):
+    """Add admin comment to inspection assignment."""
+    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "assignment_id": assignment_id})
+    result = add_admin_comment_to_assignment_handler(event, None)
+    return parse_lambda_response(result)
+
 @assignment_router.delete("/{vessel_id}/{assignment_id}/{form_id}", summary="Delete Inspection Assignment")
 async def delete_assignment_route(vessel_id: str, assignment_id: str, form_id: str, request: Request, tenant_ctx = Depends(require_role("admin"))):
     """Remove a form from its assignment by form_id."""
@@ -1094,6 +1145,19 @@ async def get_inspector_assignment_route(
     result = get_inspection_assignment_handler(event, None)
     return parse_lambda_response(result)
 
+@inspector_assignment_router.post("/{vessel_id}/{assignment_id}/comments", summary="Add Comment to Assignment (Inspector)")
+async def inspector_add_assignment_comment_route(
+    vessel_id: str, 
+    assignment_id: str, 
+    request: Request, 
+    tenant_ctx = Depends(require_role("inspector","crew")),
+    authorization: Optional[str] = Header(None)
+):
+    """Add inspector comment to inspection assignment."""
+    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "assignment_id": assignment_id})
+    result = add_inspector_comment_to_assignment_handler(event, None)
+    return parse_lambda_response(result)
+
 @inspector_assignment_router.get("", summary="List Inspector Assignments")
 async def list_inspector_assignments_route(request: Request, tenant_ctx = Depends(require_role("admin","inspector")), authorization: Optional[str] = Header(None)):
     """List inspection assignments for the authenticated inspector."""
@@ -1124,11 +1188,165 @@ async def request_inspector_inspection_extension_route(
 # ============================================================================
 admin_defect_router = APIRouter(prefix="/admin/defects", tags=["Admin - Defect Management"])
 
+# @admin_defect_router.get("", summary="List Defects (Admin)")
+# async def list_defects_route(request: Request, tenant_ctx = Depends(require_role("admin")), authorization: Optional[str] = Header(None)):
+#     """List defects with pagination and optional filtering."""
+#     event = await lambda_to_fastapi_response(request)
+#     result = list_defects_handler(event, None)
+#     return parse_lambda_response(result)
+
 @admin_defect_router.get("", summary="List Defects (Admin)")
-async def list_defects_route(request: Request, tenant_ctx = Depends(require_role("admin")), authorization: Optional[str] = Header(None)):
-    """List defects with pagination and optional filtering."""
-    event = await lambda_to_fastapi_response(request)
+async def list_defects_route(
+    request: Request,
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(20, ge=1, le=100, description="Items per page"),
+    inspection_type: Optional[str] = Query(None, description="Filter by inspection type (INSPECTION, AUDIT, vessel_inspection, psc_inspection, etc.)"),
+    event_type: Optional[str] = Query(None, description="Filter by event type (Vessel Defect, Near Miss, Deficiency, etc.)"),
+    vessel_id: Optional[str] = Query(None, description="Filter by vessel ID"),
+    status: Optional[str] = Query(None, description="Filter by status (open, closed, resolved)"),
+    assignment_id: Optional[str] = Query(None, description="Filter by assignment ID"),
+    tenant_ctx = Depends(require_role("admin")),
+    authorization: Optional[str] = Header(None),
+):
+    """List defects with pagination and advanced filtering using GSI2."""
+    query_params = {
+        "page": page,
+        "limit": limit,
+    }
+    if inspection_type:
+        query_params["inspection_type"] = inspection_type
+    if event_type:
+        query_params["event_type"] = event_type
+    if vessel_id:
+        query_params["vessel_id"] = vessel_id
+    if status:
+        query_params["status"] = status
+    if assignment_id:
+        query_params["assignment_id"] = assignment_id
+    
+    event = await lambda_to_fastapi_response(request, query_params=query_params)
     result = list_defects_handler(event, None)
+    return parse_lambda_response(result)
+
+@admin_defect_router.get("/vessels/{vessel_id}/defects", summary="List Vessel Defects")
+async def list_vessel_defects_route(
+    vessel_id: str,
+    request: Request,
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1, le=50),
+    inspection_type: Optional[str] = Query(None),
+    event_type: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    tenant_ctx = Depends(require_role("admin", "inspector", "crew")),
+):
+    """List defects for a vessel with pagination (10 per page)."""
+    query_params = {"page": page, "limit": limit}
+    if inspection_type:
+        query_params["inspection_type"] = inspection_type
+    if event_type:
+        query_params["event_type"] = event_type
+    if status:
+        query_params["status"] = status
+    
+    event = await lambda_to_fastapi_response(
+        request, path_params={"vessel_id": vessel_id}, query_params=query_params
+    )
+    result = list_vessel_defects_handler(event, None)
+    return parse_lambda_response(result)
+
+@admin_defect_router.get("/statistics/fleet", summary="Get Fleet Statistics")
+async def get_fleet_statistics_route(
+    request: Request,
+    tenant_ctx = Depends(require_role("admin")),
+):
+    """Get aggregated fleet statistics for all vessels."""
+    event = await lambda_to_fastapi_response(request)
+    result = get_fleet_statistics_handler(event, None)
+    return parse_lambda_response(result)
+
+@admin_defect_router.get("/vessels/statistics", summary="Get Vessels with Statistics")
+async def get_vessels_with_statistics_route(
+    request: Request,
+    type: str = "vessel_defect",  # Query param: vessel_defect, near_miss, third_party, internal_inspection
+    tenant_ctx = Depends(require_role("admin")),
+):
+    """Get all vessels with pre-calculated statistics for vessel cards."""
+    event = await lambda_to_fastapi_response(request)
+    # Add type to query params
+    event["queryStringParameters"] = {"type": type}
+    result = get_vessels_with_statistics_handler(event, None)
+    return parse_lambda_response(result)
+
+@admin_defect_router.get("/{vessel_id}/excel", summary="Download Defects Excel Report")
+async def download_defect_excel_route(
+    vessel_id: str,
+    request: Request,
+    start_date: Optional[str] = Query(None, description="Start date filter (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="End date filter (YYYY-MM-DD)"),
+    inspection_type: Optional[str] = Query(None, description="Filter by inspection type"),
+    event_type: Optional[str] = Query(None, description="Filter by event type"),
+    include_all: bool = Query(False, description="Include all defects without date filter"),
+    assignment_id: Optional[str] = Query(None, description="Filter by assignment ID"),
+    tenant_ctx = Depends(require_role("admin")),
+    authorization: Optional[str] = Header(None),
+):
+    """Download defect report as Excel with optional filters."""
+    query_params = {}
+    if start_date:
+        query_params["start_date"] = start_date
+    if end_date:
+        query_params["end_date"] = end_date
+    if inspection_type:
+        query_params["inspection_type"] = inspection_type
+    if event_type:
+        query_params["event_type"] = event_type
+    if include_all:
+        query_params["include_all"] = "true"
+    if assignment_id:
+        query_params["assignment_id"] = assignment_id
+    
+    event = await lambda_to_fastapi_response(
+        request, 
+        path_params={"vessel_id": vessel_id},
+        query_params=query_params
+    )
+    result = download_defect_excel_handler(event, None)
+    return parse_lambda_response(result)
+
+@admin_defect_router.get("/{vessel_id}/pdf", summary="Download Defects PDF Report")
+async def download_defect_pdf_with_filters_route(
+    vessel_id: str,
+    request: Request,
+    start_date: Optional[str] = Query(None, description="Start date filter (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="End date filter (YYYY-MM-DD)"),
+    inspection_type: Optional[str] = Query(None, description="Filter by inspection type"),
+    event_type: Optional[str] = Query(None, description="Filter by event type"),
+    include_all: bool = Query(False, description="Include all defects without date filter"),
+    assignment_id: Optional[str] = Query(None, description="Filter by assignment ID"),
+    tenant_ctx = Depends(require_role("admin")),
+    authorization: Optional[str] = Header(None),
+):
+    """Download defect report as PDF with optional filters."""
+    query_params = {}
+    if start_date:
+        query_params["start_date"] = start_date
+    if end_date:
+        query_params["end_date"] = end_date
+    if inspection_type:
+        query_params["inspection_type"] = inspection_type
+    if event_type:
+        query_params["event_type"] = event_type
+    if include_all:
+        query_params["include_all"] = "true"
+    if assignment_id:
+        query_params["assignment_id"] = assignment_id
+    
+    event = await lambda_to_fastapi_response(
+        request, 
+        path_params={"vessel_id": vessel_id},
+        query_params=query_params
+    )
+    result = download_defect_pdf_with_filters_handler(event, None)
     return parse_lambda_response(result)
 
 @admin_defect_router.get("/{vessel_id}/{defect_id}", summary="Get Defect (Admin)")
@@ -1218,6 +1436,8 @@ async def review_defect_extension_route(
     )
     result = review_extension_handler(event, None)
     return parse_lambda_response(result)
+
+
 # ============================================================================
 # INSPECTOR DEFECT ROUTES
 # ============================================================================
@@ -1231,10 +1451,67 @@ async def create_inspector_defect_route(request: Request, tenant_ctx = Depends(r
     return parse_lambda_response(result)
 
 @inspector_defect_router.get("", summary="List Inspector Defects")
-async def list_inspector_defects_route(request: Request, tenant_ctx = Depends(require_role("admin","inspector")), authorization: Optional[str] = Header(None)):
-    """List defects raised by the authenticated inspector."""
-    event = await lambda_to_fastapi_response(request)
+async def list_inspector_defects_route(
+    request: Request,
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    inspection_type: Optional[str] = Query(None, description="Filter by inspection type"),
+    event_type: Optional[str] = Query(None, description="Filter by event type"),
+    vessel_id: Optional[str] = Query(None, description="Filter by vessel ID"),
+    status: Optional[str] = Query(None, description="Filter by status"),
+    assignment_id: Optional[str] = Query(None, description="Filter by assignment ID"),
+    tenant_ctx = Depends(require_role("admin", "inspector")),
+    authorization: Optional[str] = Header(None),
+):
+    """List defects raised by the authenticated inspector with filters."""
+    query_params = {"page": page, "limit": limit}
+    if inspection_type:
+        query_params["inspection_type"] = inspection_type
+    if event_type:
+        query_params["event_type"] = event_type
+    if vessel_id:
+        query_params["vessel_id"] = vessel_id
+    if status:
+        query_params["status"] = status
+    if assignment_id:
+        query_params["assignment_id"] = assignment_id
+    
+    event = await lambda_to_fastapi_response(request, query_params=query_params)
     result = list_inspector_defects_handler(event, None)
+    return parse_lambda_response(result)
+
+@inspector_defect_router.get("/statistics/fleet", summary="Get Inspector Fleet Statistics")
+async def get_inspector_fleet_statistics_route(
+    request: Request,
+    tenant_ctx = Depends(require_role("inspector")),
+):
+    """Get aggregated fleet statistics for inspector's assigned vessels."""
+    event = await lambda_to_fastapi_response(request)
+    result = get_inspector_fleet_statistics_handler(event, None)
+    return parse_lambda_response(result)
+
+
+@inspector_defect_router.get("/vessels/statistics", summary="Get Inspector Vessels with Statistics")
+async def get_inspector_vessels_with_statistics_route(
+    request: Request,
+    type: str = Query("vessel_defect", description="Statistics type: vessel_defect, near_miss, third_party, internal_inspection"),
+    tenant_ctx = Depends(require_role("inspector")),
+):
+    """Get all vessels assigned to inspector with pre-calculated statistics."""
+    event = await lambda_to_fastapi_response(request)
+    event["queryStringParameters"] = {"type": type}
+    result = get_inspector_vessels_with_statistics_handler(event, None)
+    return parse_lambda_response(result)
+@inspector_defect_router.get("/{vessel_id}/{defect_id}", summary="Get Defect by ID")
+async def get_inspector_defect_route(
+    vessel_id: str,
+    defect_id: str, 
+    request: Request,
+    tenant_ctx = Depends(require_role("inspector")),
+):
+    """Get a single defect by ID for inspector."""
+    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "defect_id": defect_id})
+    result = get_defect_handler(event, None)
     return parse_lambda_response(result)
 
 @inspector_defect_router.put("/{vessel_id}/{defect_id}", summary="Update Defect (Inspector)")
@@ -1313,26 +1590,68 @@ async def inspector_rca_complete_route(
     return parse_lambda_response(result)
 # Add these to inspector_defect_router in your local code:
 
-@inspector_defect_router.get("/download/{vessel_id}", summary="Download Inspector Defect Report")
-async def download_inspector_defect_reports_route(
+@inspector_defect_router.get("/download/pdf/{vessel_id}", summary="Download Inspector Defect Report (PDF)")
+async def download_inspector_defect_pdf_route(
     vessel_id: str,
-    request: Request, 
-    tenant_ctx = Depends(require_role("admin","inspector")), 
+    request: Request,
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    inspection_type: Optional[str] = Query(None),
+    event_type: Optional[str] = Query(None),
+    include_all: bool = Query(False),
+    assignment_id: Optional[str] = Query(None),
+    tenant_ctx = Depends(require_role("admin", "inspector")),
     authorization: Optional[str] = Header(None)
 ):
-    """Inspector defect download report."""
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id})
+    """Inspector defect download report as PDF with date range filters."""
+    query_params = {}
+    if start_date:
+        query_params["start_date"] = start_date
+    if end_date:
+        query_params["end_date"] = end_date
+    if inspection_type:
+        query_params["inspection_type"] = inspection_type
+    if event_type:
+        query_params["event_type"] = event_type
+    if include_all:
+        query_params["include_all"] = "true"
+    if assignment_id:
+        query_params["assignment_id"] = assignment_id
+    
+    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id}, query_params=query_params)
     result = download_inspector_defect_reports_handler(event, None)
     return parse_lambda_response(result)
 
-@inspector_defect_router.get("/download/excel/{vessel_id}")
+
+@inspector_defect_router.get("/download/excel/{vessel_id}", summary="Download Inspector Defect Report (Excel)")
 async def download_inspector_defect_excel_route(
-    vessel_id: str, 
+    vessel_id: str,
     request: Request,
-    tenant_ctx = Depends(require_role("admin","inspector")),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    inspection_type: Optional[str] = Query(None),
+    event_type: Optional[str] = Query(None),
+    include_all: bool = Query(False),
+    assignment_id: Optional[str] = Query(None),
+    tenant_ctx = Depends(require_role("admin", "inspector")),
     authorization: Optional[str] = Header(None)
 ):
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id})
+    """Inspector defect download report as Excel with date range filters."""
+    query_params = {}
+    if start_date:
+        query_params["start_date"] = start_date
+    if end_date:
+        query_params["end_date"] = end_date
+    if inspection_type:
+        query_params["inspection_type"] = inspection_type
+    if event_type:
+        query_params["event_type"] = event_type
+    if include_all:
+        query_params["include_all"] = "true"
+    if assignment_id:
+        query_params["assignment_id"] = assignment_id
+    
+    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id}, query_params=query_params)
     result = download_inspector_defect_excel_handler(event, None)
     return parse_lambda_response(result)
 
@@ -1383,10 +1702,68 @@ async def create_crew_defect_route(request: Request, tenant_ctx = Depends(requir
     return parse_lambda_response(result)
 
 @crew_defect_router.get("", summary="List Crew Defects")
-async def list_crew_defects_route(request: Request, tenant_ctx = Depends(require_role("admin","crew")), authorization: Optional[str] = Header(None)):
-    """List defects raised by the authenticated crew member."""
-    event = await lambda_to_fastapi_response(request)
+async def list_crew_defects_route(
+    request: Request,
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    inspection_type: Optional[str] = Query(None, description="Filter by inspection type"),
+    event_type: Optional[str] = Query(None, description="Filter by event type"),
+    vessel_id: Optional[str] = Query(None, description="Filter by vessel ID"),
+    status: Optional[str] = Query(None, description="Filter by status"),
+    assignment_id: Optional[str] = Query(None, description="Filter by assignment ID"),
+    tenant_ctx = Depends(require_role("admin", "crew")),
+    authorization: Optional[str] = Header(None),
+):
+    """List defects raised by the authenticated crew member with filters."""
+    query_params = {"page": page, "limit": limit}
+    if inspection_type:
+        query_params["inspection_type"] = inspection_type
+    if event_type:
+        query_params["event_type"] = event_type
+    if vessel_id:
+        query_params["vessel_id"] = vessel_id
+    if status:
+        query_params["status"] = status
+    if assignment_id:
+        query_params["assignment_id"] = assignment_id
+    
+    event = await lambda_to_fastapi_response(request, query_params=query_params)
     result = list_crew_defects_handler(event, None)
+    return parse_lambda_response(result)
+
+@crew_defect_router.get("/statistics/fleet", summary="Get Crew Fleet Statistics")
+async def get_crew_fleet_statistics_route(
+    request: Request,
+    tenant_ctx = Depends(require_role("crew")),
+):
+    """Get aggregated fleet statistics for crew member's assigned vessels."""
+    event = await lambda_to_fastapi_response(request)
+    result = get_crew_fleet_statistics_handler(event, None)
+    return parse_lambda_response(result)
+
+
+@crew_defect_router.get("/vessels/statistics", summary="Get Crew Vessels with Statistics")
+async def get_crew_vessels_with_statistics_route(
+    request: Request,
+    type: str = Query("vessel_defect", description="Statistics type: vessel_defect, near_miss, third_party, internal_inspection"),
+    tenant_ctx = Depends(require_role("crew")),
+):
+    """Get all vessels assigned to crew member with pre-calculated statistics."""
+    event = await lambda_to_fastapi_response(request)
+    event["queryStringParameters"] = {"type": type}
+    result = get_crew_vessels_with_statistics_handler(event, None)
+    return parse_lambda_response(result)
+
+@crew_defect_router.get("/{vessel_id}/{defect_id}", summary="Get Defect by ID")
+async def get_crew_defect_route(
+    vessel_id: str,
+    defect_id: str,
+    request: Request,
+    tenant_ctx = Depends(require_role("crew")),
+):
+    """Get a single defect by ID for crew."""
+    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "defect_id": defect_id})
+    result = get_defect_handler(event, None)
     return parse_lambda_response(result)
 
 @crew_defect_router.put("/{vessel_id}/{defect_id}", summary="Update Defect (Crew)")
@@ -1474,26 +1851,68 @@ async def crew_rca_complete_route(
     return parse_lambda_response(result)
 # Add these to crew_defect_router in your local code:
 
-@crew_defect_router.get("/download/{vessel_id}", summary="Download Crew Defect Report")
-async def download_crew_defect_reports_route(
+@crew_defect_router.get("/download/pdf/{vessel_id}", summary="Download Crew Defect Report (PDF)")
+async def download_crew_defect_pdf_route(
     vessel_id: str,
-    request: Request, 
-    tenant_ctx = Depends(require_role("admin","crew")), 
+    request: Request,
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    inspection_type: Optional[str] = Query(None),
+    event_type: Optional[str] = Query(None),
+    include_all: bool = Query(False),
+    assignment_id: Optional[str] = Query(None),
+    tenant_ctx = Depends(require_role("admin", "crew")),
     authorization: Optional[str] = Header(None)
 ):
-    """Crew defect download report."""
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id})
+    """Crew defect download report as PDF with date range filters."""
+    query_params = {}
+    if start_date:
+        query_params["start_date"] = start_date
+    if end_date:
+        query_params["end_date"] = end_date
+    if inspection_type:
+        query_params["inspection_type"] = inspection_type
+    if event_type:
+        query_params["event_type"] = event_type
+    if include_all:
+        query_params["include_all"] = "true"
+    if assignment_id:
+        query_params["assignment_id"] = assignment_id
+    
+    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id}, query_params=query_params)
     result = download_crew_defect_reports_handler(event, None)
     return parse_lambda_response(result)
 
-@crew_defect_router.get("/download/excel/{vessel_id}")
+
+@crew_defect_router.get("/download/excel/{vessel_id}", summary="Download Crew Defect Report (Excel)")
 async def download_crew_defect_excel_route(
-    vessel_id: str, 
+    vessel_id: str,
     request: Request,
-    tenant_ctx = Depends(require_role("admin","crew")),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    inspection_type: Optional[str] = Query(None),
+    event_type: Optional[str] = Query(None),
+    include_all: bool = Query(False),
+    assignment_id: Optional[str] = Query(None),
+    tenant_ctx = Depends(require_role("admin", "crew")),
     authorization: Optional[str] = Header(None)
 ):
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id})
+    """Crew defect download report as Excel with date range filters."""
+    query_params = {}
+    if start_date:
+        query_params["start_date"] = start_date
+    if end_date:
+        query_params["end_date"] = end_date
+    if inspection_type:
+        query_params["inspection_type"] = inspection_type
+    if event_type:
+        query_params["event_type"] = event_type
+    if include_all:
+        query_params["include_all"] = "true"
+    if assignment_id:
+        query_params["assignment_id"] = assignment_id
+    
+    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id}, query_params=query_params)
     result = download_crew_defect_excel_handler(event, None)
     return parse_lambda_response(result)
 
@@ -1955,6 +2374,143 @@ async def delete_certificate_route(
     result = delete_certificate_handler(event, None)
     return parse_lambda_response(result)
 
+incident_router = APIRouter(prefix="/incidents", tags=["Incident Investigation"])
+
+@incident_router.get("/vessels/dropdown", summary="Get Vessels for Dropdown")
+async def get_vessels_for_dropdown_route(
+    request: Request,
+    tenant_ctx = Depends(require_role("crew", "admin", "inspector")),
+    authorization: Optional[str] = Header(None)
+):
+    """Get all active vessels for dropdown selection."""
+    event = await lambda_to_fastapi_response(request)
+    result = get_vessels_for_dropdown_handler(event, None)
+    return parse_lambda_response(result)
+
+
+@incident_router.post("", summary="Create Incident (Flash Report)")
+async def create_incident_route(
+    request: Request,
+    tenant_ctx = Depends(require_role("crew", "admin")),
+    authorization: Optional[str] = Header(None)
+):
+    event = await lambda_to_fastapi_response(request)
+    result = create_incident_handler(event, None)
+    return parse_lambda_response(result)
+
+
+@incident_router.get("/vessel/{vessel_id}", summary="List Incidents by Vessel")
+async def list_incidents_by_vessel_route(
+    vessel_id: str,
+    request: Request,
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    tenant_ctx = Depends(require_role("crew", "admin", "inspector")),
+    authorization: Optional[str] = Header(None)
+):
+    event = await lambda_to_fastapi_response(
+        request,
+        path_params={"vessel_id": vessel_id},
+        query_params={"page": str(page), "limit": str(limit)}
+    )
+    result = list_incidents_by_vessel_handler(event, None)
+    return parse_lambda_response(result)
+
+
+@incident_router.get("/stats/vessel/{vessel_id}", summary="Get Vessel Incident Stats")
+async def get_vessel_incident_stats_route(
+    vessel_id: str,
+    request: Request,
+    tenant_ctx = Depends(require_role("crew", "admin", "inspector")),
+    authorization: Optional[str] = Header(None)
+):
+    event = await lambda_to_fastapi_response(
+        request,
+        path_params={"vessel_id": vessel_id}
+    )
+    result = get_vessel_incident_stats_handler(event, None)
+    return parse_lambda_response(result)
+
+
+@incident_router.get("/stats/fleet", summary="Get Fleet Incident Stats")
+async def get_fleet_incident_stats_route(
+    request: Request,
+    tenant_ctx = Depends(require_role("admin", "crew", "inspector")),
+    authorization: Optional[str] = Header(None)
+):
+    event = await lambda_to_fastapi_response(request)
+    result = get_fleet_incident_stats_handler(event, None)
+    return parse_lambda_response(result)
+
+
+@incident_router.put("/{vessel_id}/{incident_id}", summary="Update Incident")
+async def update_incident_route(
+    vessel_id: str,
+    incident_id: str,
+    request: Request,
+    tenant_ctx = Depends(require_role("crew", "admin","inspector")),
+    authorization: Optional[str] = Header(None)
+):
+    event = await lambda_to_fastapi_response(
+        request,
+        path_params={"vessel_id": vessel_id, "incident_id": incident_id}
+    )
+    result = update_incident_handler(event, None)
+    return parse_lambda_response(result)
+
+
+@incident_router.get("/{vessel_id}/{incident_id}", summary="Get Incident")
+async def get_incident_route(
+    vessel_id: str,
+    incident_id: str,
+    request: Request,
+    tenant_ctx = Depends(require_role("crew", "admin", "inspector")),
+    authorization: Optional[str] = Header(None)
+):
+    event = await lambda_to_fastapi_response(
+        request,
+        path_params={"vessel_id": vessel_id, "incident_id": incident_id}
+    )
+    result = get_incident_handler(event, None)
+    return parse_lambda_response(result)
+
+
+@incident_router.delete("/{vessel_id}/{incident_id}", summary="Delete Incident")
+async def delete_incident_route(
+    vessel_id: str,
+    incident_id: str,
+    request: Request,
+    tenant_ctx = Depends(require_role("admin")),
+    authorization: Optional[str] = Header(None)
+):
+    event = await lambda_to_fastapi_response(
+        request,
+        path_params={"vessel_id": vessel_id, "incident_id": incident_id}
+    )
+    result = delete_incident_handler(event, None)
+    return parse_lambda_response(result)
+
+@incident_router.get("/{vessel_id}/{incident_id}/export", summary="Export Incident as PDF")
+async def export_incident_pdf_route(
+    vessel_id: str,
+    incident_id: str,
+    request: Request,
+    tenant_ctx = Depends(require_role("crew", "admin", "inspector")),
+    authorization: Optional[str] = Header(None)
+):
+    event = await lambda_to_fastapi_response(
+        request,
+        path_params={"vessel_id": vessel_id, "incident_id": incident_id}
+    )
+    result = export_incident_pdf_handler(event, None)
+    
+    if result.get("statusCode") == 200:
+        return Response(
+            content=base64.b64decode(result["body"]),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="incident_report_{incident_id}.pdf"'}
+        )
+    return parse_lambda_response(result)
 # ============================================================================
 # INCLUDE ALL ROUTERS IN MAIN API ROUTER
 # ============================================================================
@@ -1983,3 +2539,4 @@ api_router.include_router(recurring_inspection_router)
 api_router.include_router(system_logs_router)
 api_router.include_router(company_notifications_router)
 api_router.include_router(certificate_router)
+api_router.include_router(incident_router)
