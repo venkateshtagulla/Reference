@@ -1,2542 +1,1234 @@
-"""
-Comprehensive FastAPI router configuration for ALL API endpoints.
-This creates FastAPI routes that wrap the existing Lambda handlers.
-"""
-from fastapi import APIRouter, Header, Request, Response, Query, File, UploadFile
-from typing import Optional, List
-# Import all Lambda handlers from routers/lambda/
-from routers.lambda_module.auth import (
-    register_handler as inspector_register,
-    login_handler as inspector_login,
-    profile_handler as inspector_profile,
-    change_password_handler as inspector_change_password,
-    inspector_me_handler,
-    inspector_dashboard_handler,
-    inspector_sync_handler,
-)
-from routers.lambda_module.admin_admin import(
-    admin_create_admin_handler,
-    admin_list_admins_handler,
-    admin_get_admin_handler,
-    admin_reset_admin_password_handler,
-    admin_update_admin_handler,
-    admin_delete_admin_handler)
-from routers.lambda_module.admin_auth import (
-    admin_register_handler,
-    admin_login_handler,
-    admin_profile_handler,
-    admin_me_handler,
-    admin_change_password_handler,
-)
-from routers.lambda_module.admin_inspector import (
-    admin_create_inspector_handler,
-    admin_get_inspector_handler,
-    admin_list_inspectors_handler,
-    admin_reset_inspector_password_handler,
-    admin_delete_inspector_handler,
-    admin_update_inspector_handler,
-)
-from routers.lambda_module.vessel import (
-    create_vessel_handler,
-    list_vessels_handler,
-    get_vessel_handler,
-    update_vessel_handler,
-    create_vessel_assignment_handler,
-    get_vessel_assignments_handler,
-    delete_vessel_assignment_handler,
-    download_vessel_pdf_handler,
-    delete_vessel_handler,
-)
-from routers.lambda_module.crew import (
-    create_crew_handler,
-    get_crew_handler,
-    list_crew_handler,
-    register_crew_handler,
-    login_crew_handler,
-    admin_reset_crew_password_handler,
-    admin_delete_crew_handler,
-    crew_me_handler,
-    crew_dashboard_handler,
-    crew_sync_handler,
-    admin_update_crew_handler,
-)
-from routers.lambda_module.inspection_form import (
-    create_inspection_form_handler,
-    get_inspection_form_handler,
-    update_inspection_form_handler,
-    delete_inspection_form_handler,
-    list_inspection_forms_handler,
-    list_submitted_forms_handler,
-    list_inspector_forms_handler,
-    submit_inspection_form_handler,
-    list_template_forms_handler,
-    get_template_form_handler,
-    attach_template_form_handler,
-    export_form_excel_handler,
-    export_template_excel_handler
-)
-from routers.lambda_module.inspection_assignment import (
-    create_inspection_assignment_handler,
-    bulk_create_inspection_assignment_handler,
-    get_inspection_assignment_handler,
-    list_inspection_assignments_handler,
-    list_inspector_assignments_handler,
-    create_crew_inspection_assignment_handler,
-    list_crew_assignments_handler,
-    delete_inspection_assignment_handler,
-    download_inspection_pdf_handler,
-    list_inspection_assignments_latest,
-    update_inspection_assignment_handler,
-    trigger_inspection_ai_analysis_handler,
-    get_ai_analysis_progress_handler,
-    retry_inspection_ai_sections_handler,  
-    request_inspector_inspection_extension_handler,  
-    request_crew_inspection_extension_handler,  
-    review_inspection_extension_handler,
-    add_admin_comment_to_assignment_handler,
-    add_inspector_comment_to_assignment_handler,
-    add_crew_comment_to_assignment_handler,
-)
-from routers.lambda_module.defect import (
-    list_defects_handler,
-    get_defect_handler,
-    approve_defect_handler,
-    close_defect_handler,
-    add_comment_handler,
-    inspector_comment_handler,
-    update_defect_handler,
-    create_inspector_defect_handler,
-    list_inspector_defects_handler,
-    create_crew_defect_handler,
-    list_crew_defects_handler,
-    add_inspector_defect_analysis_handler,
-    add_crew_defect_analysis_handler,
-    crew_comment_handler,  # Added missing import
-    download_defect_pdf_handler,  # Added missing import
-    delete_defect_handler,
-    start_rca_analysis_handler,
-    next_rca_question_handler,
-    complete_rca_analysis_handler,
-    update_defect_analysis_admin_handler,
-    review_defect_by_inspector_handler, 
-    request_inspector_extension_handler, 
-    request_crew_extension_handler, 
-    review_extension_handler,  
-    download_inspector_defect_reports_handler,  
-    download_inspector_defect_excel_handler,  
-    download_crew_defect_reports_handler,  
-    download_crew_defect_excel_handler,
-    download_defect_excel_handler, 
-    download_defect_pdf_with_filters_handler,
-    list_vessel_defects_handler,
-    get_fleet_statistics_handler,
-    get_vessels_with_statistics_handler,
-    get_inspector_fleet_statistics_handler,
-    get_inspector_vessels_with_statistics_handler,
-    get_crew_fleet_statistics_handler,
-    get_crew_vessels_with_statistics_handler
-     
-)
-from routers.lambda_module.notifications_handler import (
-    create_notification_handler,
-    list_notifications_handler,
-    get_notification_handler,
-    update_notification_handler,
-    delete_notification_handler,
-    mark_notification_read_handler,
-    mark_multiple_notifications_read_handler,
-    mark_all_notifications_read_handler,
-    get_unread_count_handler
-)
-from routers.lambda_module.recurring_inspection_handler import trigger_recurring_inspections_handler
-from routers.lambda_module.system_logs_handler import (
-    create_system_log_handler,
-    list_system_logs_handler,
-    get_system_log_handler,
-    update_system_log_status_handler,
-    update_system_log_priority_handler,
-)
-from routers.lambda_module.company_notifications_handler import (
-    create_company_notification_handler,
-    list_company_notifications_handler,
-    get_company_notification_handler,
-    update_company_notification_handler,
-    delete_company_notification_handler,
-    mark_company_notification_read_handler,
-    mark_multiple_company_notifications_read_handler,
-    mark_all_company_notifications_read_handler,
-    get_company_unread_count_handler
-)
-from routers.lambda_module.vessel_certificates import (
-    create_certificate_handler,
-    update_certificate_handler,
-    delete_certificate_handler,
-    get_certificate_handler,
-    list_certificates_handler,
-)
-from routers.lambda_module.incident_handler import (
-    get_vessels_for_dropdown_handler,
-    create_incident_handler,
-    update_incident_handler,
-    get_incident_handler,
-    list_incidents_by_vessel_handler,
-    delete_incident_handler,
-    get_vessel_incident_stats_handler,
-    get_fleet_incident_stats_handler,
-    export_incident_pdf_handler,
-)
+"use client";
 
-from routers.lambda_module.upload import presign_upload_handler
-from routers.lambda_module.dashboard import get_dashboard_handler
-from fastapi.responses import JSONResponse
-import json
-from utility.lambda_to_fastapi import lambda_to_fastapi_response
-from utility.fastapi_response import lambda_response_to_fastapi
-from utility.role_based_access_control import require_role
-from fastapi import Depends
-import base64
-from decimal import Decimal
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { DownloadButton } from "@/components/DownloadButton";
+import {
+  AlertTriangle,
+  Calendar,
+  CheckCircle,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ClipboardCheck,
+  Filter,
+  Search,
+  Ship,
+  Trash2,
+} from "lucide-react";
+import { defectsApi, type DefectData } from "@/lib/api";
+import { ActionToast, DefectActionDialog, type ActionToastState } from "@/components/DefectActionDialogs";
+import DefectSummaryPanel from "@/components/DefectSummaryPanel";
 
-# Create main API router
-api_router = APIRouter()
-from fastapi.responses import JSONResponse
-import json
-from decimal import Decimal
+type ThirdPartyType = {
+  value: string;
+  label: string;
+};
 
-def convert_decimals(obj):
-    if isinstance(obj, list):
-        return [convert_decimals(i) for i in obj]
-    elif isinstance(obj, dict):
-        return {k: convert_decimals(v) for k, v in obj.items()}
-    elif isinstance(obj, Decimal):
-        if obj % 1 == 0:
-            return int(obj)
-        return float(obj)
-    return obj
+type FleetStats = {
+  vessels_count: number;
+  third_party: Record<string, { total: number; open: number; in_progress?: number; overdue: number; closed: number }>;
+};
 
-def parse_lambda_response(result: dict):
-    status_code = result.get("statusCode", 200)
-    headers = result.get("headers", {})
-    body = result.get("body")
+type VesselStats = {
+  vessel_id: string;
+  name: string;
+  type: string;
+  imo_number?: string;
+  total_defects: number;
+  open: number;
+  overdue: number;
+  closed: number;
+  closed_percentage: number;
+  inspection_counts: Partial<Record<string, number>>;
+  inspection_open_counts: Partial<Record<string, number>>;
+};
 
-    if result.get("isBase64Encoded") and body:
-        decoded_body = base64.b64decode(body)
-        return Response(
-            content=decoded_body,
-            status_code=status_code,
-            headers=headers,
-            media_type=headers.get("Content-Type", "application/octet-stream"),
-        )
-    
-    if body is None:
-        body = {k: v for k, v in result.items() if k not in ["statusCode", "headers", "cookies"]}
+const THIRD_PARTY_TYPES: ThirdPartyType[] = [
+  { value: "rightship_inspection", label: "RIGHTSHIP" },
+  { value: "psc_inspection", label: "PSC" },
+  { value: "class_audit", label: "CLASS AUDIT" },
+  { value: "flag_inspection", label: "FLAG" },
+  { value: "owners_inspection", label: "OWNER'S" },
+  { value: "pandi_inspection", label: "P&I" },
+  { value: "hnm_inspection", label: "H&M" },
+  { value: "sire_inspection", label: "SIRE" },
+];
 
-    if isinstance(body, str):
-        try:
-            body = json.loads(body)
-        except Exception:
-            body = {"raw": body}
-            
-    body = convert_decimals(body)
+const DEFAULT_INSPECTION_TYPE = "rightship_inspection";
+const FINDINGS_PER_PAGE = 15;
 
-    response = JSONResponse(status_code=status_code, content=body, headers=headers)
-    
-    cookies = result.get("cookies", [])
-    for cookie in cookies:
-        parts = cookie.split(";")
-        if not parts or "=" not in parts[0]:
-            continue
+const statusConfig: Record<string, { label: string; className: string }> = {
+  open: { label: "Open", className: "bg-amber-50 text-slate-700 border-amber-200" },
+  in_progress: { label: "In Progress", className: "bg-blue-50 text-slate-700 border-blue-200" },
+  progress: { label: "In Progress", className: "bg-blue-50 text-slate-700 border-blue-200" },
+  overdue: { label: "Overdue", className: "bg-red-50 text-slate-700 border-red-200" },
+  closed: { label: "Closed", className: "bg-green-50 text-slate-700 border-green-200" },
+  resolved: { label: "Closed", className: "bg-green-50 text-slate-700 border-green-200" },
+};
 
-        key, value = parts[0].split("=", 1)
-        cookie_params = {
-            p.split("=")[0].strip().lower(): (p.split("=")[1] if "=" in p else True)
-            for p in parts[1:]
+const criticalityConfig: Record<string, { label: string; className: string; dot: string }> = {
+  critical: { label: "Critical", className: "bg-red-50 text-slate-700 border-red-200", dot: "bg-red-500" },
+  high: { label: "High", className: "bg-orange-50 text-slate-700 border-orange-200", dot: "bg-orange-500" },
+  major: { label: "Major", className: "bg-orange-50 text-slate-700 border-orange-200", dot: "bg-orange-500" },
+  medium: { label: "Medium", className: "bg-amber-50 text-slate-700 border-amber-200", dot: "bg-amber-500" },
+  minor: { label: "Minor", className: "bg-green-50 text-slate-700 border-green-200", dot: "bg-green-500" },
+  low: { label: "Low", className: "bg-green-50 text-slate-700 border-green-200", dot: "bg-green-500" },
+};
+
+const categoryConfig: Record<string, string> = {
+  general: "bg-slate-50 text-slate-700 border-slate-200",
+  deficiency: "bg-slate-50 text-slate-700 border-slate-200",
+  safety: "bg-red-50 text-slate-700 border-red-200",
+  operational: "bg-indigo-50 text-slate-700 border-indigo-200",
+  rightship: "bg-sky-50 text-slate-700 border-sky-200",
+  psc: "bg-amber-50 text-slate-700 border-amber-200",
+};
+
+const tableHeadClass = "px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500";
+const tableCellClass = "px-3 py-3 align-middle text-[13px] font-medium text-slate-600";
+const pillClass = "inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold leading-none";
+
+function getCategoryClass(category?: string) {
+  const key = category?.toLowerCase().split(/[ /_-]/)[0] || "general";
+  return categoryConfig[key] || categoryConfig.general;
+}
+
+function getRaisedBy(defect: DefectData) {
+  return defect.raised_by_crew?.name || defect.raised_by_inspector?.name || "Inspector";
+}
+
+function getCriticality(defect: DefectData) {
+  const key = (defect.equipment_criticality || defect.priority || "medium").toLowerCase();
+  return criticalityConfig[key] || criticalityConfig.medium;
+}
+
+function cn(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(" ");
+}
+
+function SkeletonBlock({ className }: { className: string }) {
+  return <div className={cn("animate-pulse rounded-md bg-slate-200/80", className)} />;
+}
+
+function formatDate(value?: string) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function getDaysBetween(start: string, end: string) {
+  const startDate = new Date(start);
+  const endDate = new Date(end);
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) return 0;
+  return Math.ceil(Math.abs(endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+function getThirdPartyLabel(value: string) {
+  return THIRD_PARTY_TYPES.find((type) => type.value === value)?.label ?? value.replace(/_/g, " ").toUpperCase();
+}
+
+function getEffectiveStatus(defect: DefectData) {
+  const status = (defect.status ?? "open").toLowerCase();
+
+  if (status === "closed" || status === "resolved") return "closed";
+
+  if (defect.due_date) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const due = new Date(defect.due_date);
+    due.setHours(0, 0, 0, 0);
+    if (due < today) return "overdue";
+  }
+
+  if (status === "in_progress" || status === "progress") return "in_progress";
+
+  return "open";
+}
+
+function canCloseDefect(defect: DefectData) {
+  const status = (defect.status ?? "").toLowerCase();
+  return status !== "closed" && status !== "resolved";
+}
+
+function KPIBlock({
+  label,
+  value,
+  subtext,
+  icon,
+  highlightClassName,
+}: {
+  label: string;
+  value: number | string;
+  subtext?: string;
+  icon?: React.ReactNode;
+  highlightClassName?: string;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-shadow hover:shadow-md">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">{label}</div>
+          <div className={cn("mt-1 text-3xl font-bold tracking-tight", highlightClassName || "text-slate-900")}>{value}</div>
+          {subtext ? <div className="mt-1 text-[11px] font-medium text-slate-400">{subtext}</div> : null}
+        </div>
+        {icon ? <div className="text-slate-300">{icon}</div> : null}
+      </div>
+    </div>
+  );
+}
+
+function VesselCard({
+  vessel,
+  onClick,
+}: {
+  vessel: VesselStats;
+  onClick: () => void;
+}) {
+  const allClosed = vessel.total_defects > 0 && vessel.closed === vessel.total_defects;
+  const hasOverdue = vessel.overdue > 0;
+  const hasOpen = vessel.open > 0;
+
+  const inspectionRows = THIRD_PARTY_TYPES.map((type) => ({
+    ...type,
+    count: vessel.inspection_counts[type.value] ?? 0,
+    openCount: vessel.inspection_open_counts[type.value] ?? 0,
+  })).filter(row => row.count > 0);
+
+  const topBorderClass = vessel.total_defects === 0
+    ? "border-t-gray-200"
+    : hasOverdue
+      ? "border-t-red-500"
+      : hasOpen
+        ? "border-t-amber-400"
+        : allClosed
+          ? "border-t-emerald-500"
+          : "border-t-gray-200";
+
+  return (
+    <div
+      onClick={onClick}
+      className={cn(
+        "overflow-hidden rounded-xl border border-slate-100 bg-white shadow-sm transition-all hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-md",
+        "border-t-4",
+        topBorderClass
+      )}
+    >
+      <div className="p-4">
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-sky-50 text-sky-600">
+              <Ship className="h-4 w-4" />
+            </div>
+            <div className="min-w-0">
+              <h3 className="truncate text-sm font-bold text-slate-900">{vessel.name}</h3>
+              <p className="mt-0.5 truncate text-xs text-slate-400">
+                {vessel.type}
+                {vessel.imo_number ? ` | IMO: ${vessel.imo_number}` : ""}
+              </p>
+            </div>
+          </div>
+          <div className="flex h-6 min-w-6 items-center justify-center rounded-full bg-slate-100 px-2 text-[11px] font-bold text-slate-500">
+            {vessel.total_defects}
+          </div>
+        </div>
+
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          {hasOverdue ? (
+            <span className="inline-flex items-center gap-1 rounded-md border border-red-100 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-600">
+              <AlertTriangle className="h-3 w-3" /> {vessel.overdue} overdue
+            </span>
+          ) : null}
+          {hasOpen ? (
+            <span className="inline-flex items-center gap-1 rounded-md border border-amber-100 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700">
+              {vessel.open} open
+            </span>
+          ) : null}
+          {allClosed ? (
+            <span className="inline-flex items-center gap-1 rounded-md border border-emerald-100 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+              <CheckCircle className="h-3 w-3" /> All closed
+            </span>
+          ) : null}
+          {vessel.total_defects === 0 ? (
+            <span className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-500">
+              No findings
+            </span>
+          ) : null}
+        </div>
+
+        {inspectionRows.length > 0 && (
+          <div className="border-t border-slate-100 pt-3">
+            <div className="mb-1.5 flex items-center justify-between text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+              <span>Inspection Type</span>
+              <span>Open / Total</span>
+            </div>
+            <div>
+              {inspectionRows.map((row, index) => {
+                const dotClass =
+                  row.value === "rightship_inspection"
+                    ? "bg-sky-400"
+                    : row.value === "psc_inspection"
+                      ? "bg-amber-400"
+                      : row.value === "class_audit"
+                        ? "bg-indigo-400"
+                        : row.value === "flag_inspection"
+                          ? "bg-rose-400"
+                          : row.value === "owners_inspection"
+                            ? "bg-violet-400"
+                            : row.value === "pandi_inspection"
+                              ? "bg-emerald-400"
+                              : row.value === "hnm_inspection"
+                                ? "bg-orange-400"
+                                : "bg-cyan-400";
+
+                return (
+                  <div
+                    key={row.value}
+                    className={cn(
+                      "flex items-center justify-between py-2 text-sm",
+                      index !== inspectionRows.length - 1 && "border-b border-gray-50"
+                    )}
+                  >
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className={cn("h-2 w-2 shrink-0 rounded-full", dotClass)} />
+                      <span className="truncate font-medium text-slate-700">{row.label}</span>
+                    </div>
+                    <div className="flex items-center gap-1 font-semibold text-slate-700">
+                      <span className={row.openCount > 0 ? "text-amber-600" : "text-slate-400"}>{row.openCount}</span>
+                      <span className="text-slate-400">/</span>
+                      <span>{row.count}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onClick();
+          }}
+          className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-sky-600 transition-colors hover:text-sky-700"
+        >
+          <span>View details</span>
+          <ChevronRight className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function TableSkeleton({ rows = 6 }: { rows?: number }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="min-w-[1440px] w-full table-fixed border-collapse text-left">
+        <thead className="border-b border-slate-200 bg-slate-50/80">
+          <tr>
+            <th className={cn(tableHeadClass, "w-[150px] pl-5")}>Defect Number / Reference Number</th>
+            <th className={cn(tableHeadClass, "w-[240px]")}>Title</th>
+            <th className={cn(tableHeadClass, "w-[170px]")}>Location</th>
+            <th className={cn(tableHeadClass, "w-[120px]")}>Status</th>
+            <th className={cn(tableHeadClass, "w-[140px]")}>Category</th>
+            <th className={cn(tableHeadClass, "w-[120px]")}>Criticality</th>
+            <th className={cn(tableHeadClass, "w-[150px]")}>Raised By</th>
+            <th className={cn(tableHeadClass, "w-[120px]")}>Created Date</th>
+            <th className={cn(tableHeadClass, "w-[120px]")}>Due Date</th>
+            <th className={cn(tableHeadClass, "w-[120px]")}>Updated Date</th>
+            <th className={cn(tableHeadClass, "w-[170px]")}>Action</th>
+            <th className={cn(tableHeadClass, "w-[90px] pr-5 text-right")}>Age</th>
+          </tr>
+        </thead>
+        <tbody>
+          {Array.from({ length: rows }).map((_, index) => (
+            <tr key={index} className="border-b border-slate-100">
+              <td className="pl-5 pr-3 py-3.5">
+                <div className="h-4 w-40 animate-pulse rounded bg-slate-200" />
+              </td>
+              <td className="px-3 py-3.5"><div className="h-4 w-44 animate-pulse rounded bg-slate-200" /></td>
+              <td className="px-3 py-3.5"><div className="h-4 w-32 animate-pulse rounded bg-slate-200" /></td>
+              <td className="px-3 py-3.5">
+                <div className="h-6 w-20 animate-pulse rounded-full bg-slate-200" />
+              </td>
+              <td className="px-3 py-3.5">
+                <div className="h-6 w-24 animate-pulse rounded-full bg-slate-200" />
+              </td>
+              <td className="px-3 py-3.5">
+                <div className="h-6 w-16 animate-pulse rounded-full bg-slate-200" />
+              </td>
+              <td className="px-3 py-3.5">
+                <div className="h-3 w-24 animate-pulse rounded bg-slate-200" />
+              </td>
+              <td className="px-3 py-3.5"><div className="h-3 w-24 animate-pulse rounded bg-slate-200" /></td>
+              <td className="px-3 py-3.5"><div className="h-3 w-24 animate-pulse rounded bg-slate-200" /></td>
+              <td className="px-3 py-3.5">
+                <div className="h-3 w-24 animate-pulse rounded bg-slate-200" />
+              </td>
+              <td className="px-3 py-3.5">
+                <div className="h-8 w-28 animate-pulse rounded-md bg-slate-200" />
+              </td>
+              <td className="pl-3 pr-5 py-3.5 text-right">
+                <div className="ml-auto h-3 w-10 animate-pulse rounded bg-slate-200" />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function Pagination({
+  page,
+  hasNext,
+  total,
+  limit,
+  onPageChange,
+  isLoading,
+}: {
+  page: number;
+  hasNext: boolean;
+  total: number;
+  limit: number;
+  onPageChange: (nextPage: number) => void;
+  isLoading?: boolean;
+}) {
+  if (!total) return null;
+
+  const start = (page - 1) * limit + 1;
+  const end = Math.min(page * limit, total);
+
+  return (
+    <div className="flex items-center justify-between gap-3 border-t border-slate-100 bg-slate-50/60 px-5 py-3.5">
+      <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">
+        Showing {start}-{end} of {total}
+      </div>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => onPageChange(page - 1)}
+          disabled={page === 1 || isLoading}
+          className={cn(
+            "rounded-md border px-3 py-1.5 text-xs font-semibold transition-colors",
+            page === 1 || isLoading
+              ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
+              : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+          )}
+        >
+          Previous
+        </button>
+        <span className="px-1 text-xs font-semibold text-slate-600">{page}</span>
+        <button
+          onClick={() => onPageChange(page + 1)}
+          disabled={!hasNext || isLoading}
+          className={cn(
+            "rounded-md border px-3 py-1.5 text-xs font-semibold transition-colors",
+            !hasNext || isLoading
+              ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
+              : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+          )}
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function FindingRow({
+  finding,
+  onSelect,
+  onCloseDefect,
+  onDeleteDefect,
+}: {
+  finding: DefectData;
+  onSelect: () => void;
+  onCloseDefect: (finding: DefectData) => void;
+  onDeleteDefect: (finding: DefectData) => void;
+}) {
+  const effectiveStatus = getEffectiveStatus(finding);
+  const status = statusConfig[effectiveStatus] ?? statusConfig.open;
+  const criticality = getCriticality(finding);
+  const isClosed = effectiveStatus === "closed";
+  const isOverdue = effectiveStatus === "overdue";
+  const age = finding.created_at ? getDaysBetween(finding.created_at, new Date().toISOString()) : 0;
+  const title = finding.title || finding.description || "Untitled finding";
+  const location = finding.location_on_ship || finding.equipment_name || "General area";
+  const category = finding.category || finding.event_type || getThirdPartyLabel(finding.inspection_type || "") || "Deficiency";
+  const raisedBy = getRaisedBy(finding);
+
+  return (
+    <tr
+      onClick={onSelect}
+      className="cursor-pointer border-b border-slate-100 transition-colors hover:bg-slate-50/70"
+    >
+      <td className="pl-5 pr-3 py-3 align-middle">
+        <div className="font-mono text-[12px] font-bold tracking-tight text-slate-900">
+          {finding.reference_number || finding.defect_id?.slice(-8) || "N/A"}
+        </div>
+      </td>
+      <td className={tableCellClass}>
+        <div className="max-w-[220px] truncate text-[13px] font-semibold text-slate-800" title={title}>
+          {title}
+        </div>
+      </td>
+      <td className={tableCellClass}>
+        <div className="max-w-[160px] truncate" title={location}>{location}</div>
+      </td>
+      <td className="px-3 py-3 align-middle whitespace-nowrap">
+        <span className={cn(pillClass, status.className)}>{status.label}</span>
+      </td>
+      <td className="px-3 py-3 align-middle">
+        <span className={cn(pillClass, getCategoryClass(category))}>
+          <span className="max-w-[120px] truncate" title={category}>{category}</span>
+        </span>
+      </td>
+      <td className="px-3 py-3 align-middle whitespace-nowrap">
+        <span className={cn(pillClass, criticality.className)} title={criticality.label}>
+          <span className={cn("h-2 w-2 rounded-full", criticality.dot)} />
+          <span className="hidden xl:inline">{criticality.label}</span>
+        </span>
+      </td>
+      <td className={tableCellClass}>
+        <div className="max-w-[140px] truncate" title={raisedBy}>{raisedBy}</div>
+      </td>
+      <td className="px-3 py-3 align-middle whitespace-nowrap text-[13px] font-medium text-slate-500">{formatDate(finding.created_at)}</td>
+      <td className="px-3 py-3 align-middle whitespace-nowrap">
+        {finding.due_date ? (
+          <span className={cn("inline-flex items-center gap-1 text-[13px] font-medium", isOverdue && !isClosed ? "text-red-600" : "text-slate-500")}>
+            <Calendar className="h-3.5 w-3.5" />
+            {formatDate(finding.due_date)}
+          </span>
+        ) : (
+          <span className="text-[13px] text-slate-400">-</span>
+        )}
+      </td>
+      <td className="px-3 py-3 align-middle whitespace-nowrap text-[13px] font-medium text-slate-500">
+        {formatDate(finding.updated_at || finding.closed_at || "")}
+      </td>
+      <td className="px-3 py-3 align-middle">
+        <div className="flex items-center gap-2">
+          {canCloseDefect(finding) ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onCloseDefect(finding);
+              }}
+              className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-bold text-emerald-700 transition-colors hover:bg-emerald-100"
+            >
+              <CheckCircle className="h-3.5 w-3.5" />
+              Close
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onDeleteDefect(finding);
+            }}
+            className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-bold text-red-700 transition-colors hover:bg-red-100"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Delete
+          </button>
+        </div>
+      </td>
+      <td className="whitespace-nowrap pl-3 pr-5 py-3 text-right">
+        <div className="flex flex-col items-end leading-none">
+          <span className={cn("text-sm font-bold", isOverdue ? "text-red-600" : age > 40 ? "text-amber-600" : "text-slate-700")}>
+            {isClosed ? "-" : age}
+          </span>
+        </div>
+      </td>
+    </tr>
+  );
+}
+function FindingsTable({
+  vesselId,
+  vesselName,
+  selectedInspectionType,
+  onInspectionTypeChange,
+  findings,
+  isLoading,
+  page,
+  onPageChange,
+  onSelectFinding,
+  onCloseDefect,
+  onDeleteDefect,
+}: {
+  vesselId: string;
+  vesselName: string;
+  selectedInspectionType: string;
+  onInspectionTypeChange: (value: string) => void;
+  findings: DefectData[];
+  isLoading: boolean;
+  page: number;
+  onPageChange: (page: number) => void;
+  onSelectFinding: (finding: DefectData) => void;
+  onCloseDefect: (finding: DefectData) => void;
+  onDeleteDefect: (finding: DefectData) => void;
+}) {
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+
+  const categoryOptions = useMemo(() => {
+    return Array.from(new Set(findings.map((finding) => finding.category || finding.event_type || "Deficiency"))).filter(Boolean);
+  }, [findings]);
+
+  const filteredFindings = useMemo(() => {
+    return findings.filter((finding) => {
+      const effectiveStatus = getEffectiveStatus(finding);
+      const category = finding.category || finding.event_type || "Deficiency";
+      const matchesSearch =
+        !searchTerm ||
+        [finding.reference_number, finding.location_on_ship, finding.title, finding.description]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(searchTerm.toLowerCase());
+      const matchesStatus = statusFilter === "all" || effectiveStatus === statusFilter;
+      const matchesCategory = categoryFilter === "all" || category === categoryFilter;
+      return matchesSearch && matchesStatus && matchesCategory;
+    });
+  }, [categoryFilter, findings, searchTerm, statusFilter]);
+
+  const paginatedFindings = filteredFindings.slice((page - 1) * FINDINGS_PER_PAGE, page * FINDINGS_PER_PAGE);
+  const totalPages = Math.ceil(filteredFindings.length / FINDINGS_PER_PAGE);
+  const hasMore = page < totalPages;
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50/70 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-sky-50">
+              <ClipboardCheck className="h-4 w-4 text-sky-600" />
+            </div>
+            <div>
+              <h3 className="text-sm font-extrabold text-slate-900">{vesselName}</h3>
+              <p className="text-[10px] font-medium text-slate-400">Third party inspection findings</p>
+            </div>
+          </div>
+          <p className="mt-2 text-[11px] text-slate-500">
+            Viewing <span className="font-semibold text-slate-700">{getThirdPartyLabel(selectedInspectionType)}</span>
+          </p>
+        </div>
+         <div className="flex items-center gap-3">
+          <DownloadButton
+              config={{
+                filterType: "inspection_type",
+                filterValue: selectedInspectionType,
+                vesselId: vesselId,
+                vesselName: vesselName,
+                title: `${getThirdPartyLabel(selectedInspectionType)} Report`,
+              }}
+              variant="outline"
+              size="sm"
+            />
+        <div className="relative w-full lg:w-[260px]">
+          <select
+            value={selectedInspectionType}
+            onChange={(e) => onInspectionTypeChange(e.target.value)}
+            className="w-full appearance-none rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-9 text-sm font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500"
+          >
+            {THIRD_PARTY_TYPES.map((type) => (
+              <option key={type.value} value={type.value}>
+                {type.label}
+              </option>
+            ))}
+          </select>
+          <Filter className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+        </div>
+      </div>
+      </div>
+
+      <div className="border-b border-slate-200 bg-white px-4 py-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative w-full max-w-xs">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Search finding..."
+              className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-4 text-sm font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500"
+            />
+          </div>
+
+          <div className="relative">
+            <Filter className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="appearance-none rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-9 text-sm font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500"
+            >
+              <option value="all">All statuses</option>
+              <option value="open">Open</option>
+              <option value="in_progress">In Progress</option>
+              <option value="overdue">Overdue</option>
+              <option value="closed">Closed</option>
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          </div>
+
+          <div className="relative">
+            <Ship className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <select
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+              className="appearance-none rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-9 text-sm font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500"
+            >
+              <option value="all">All categories</option>
+              {categoryOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          </div>
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div className="p-4">
+          <TableSkeleton rows={6} />
+        </div>
+      ) : paginatedFindings.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <ClipboardCheck className="mb-3 h-12 w-12 text-slate-300" />
+          <p className="text-sm font-medium text-slate-400">
+            No findings found for {getThirdPartyLabel(selectedInspectionType)} on {vesselName}.
+          </p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="min-w-[1440px] w-full table-fixed border-collapse text-left">
+            <thead className="border-b border-slate-200 bg-slate-50/70">
+              <tr>
+                <th className={cn(tableHeadClass, "w-[150px] pl-5")}>Defect Number / Reference Number</th>
+                <th className={cn(tableHeadClass, "w-[240px]")}>Title</th>
+                <th className={cn(tableHeadClass, "w-[170px]")}>Location</th>
+                <th className={cn(tableHeadClass, "w-[120px]")}>Status</th>
+                <th className={cn(tableHeadClass, "w-[140px]")}>Category</th>
+                <th className={cn(tableHeadClass, "w-[120px]")}>Criticality</th>
+                <th className={cn(tableHeadClass, "w-[150px]")}>Raised By</th>
+                <th className={cn(tableHeadClass, "w-[120px]")}>Created Date</th>
+                <th className={cn(tableHeadClass, "w-[120px]")}>Due Date</th>
+                <th className={cn(tableHeadClass, "w-[120px]")}>Updated Date</th>
+                <th className={cn(tableHeadClass, "w-[170px]")}>Action</th>
+                <th className={cn(tableHeadClass, "w-[90px] pr-5 text-right")}>Age</th>
+              </tr>
+            </thead>
+            <tbody>
+              {paginatedFindings.map((finding, index) => (
+                <FindingRow
+                  key={finding.defect_id || `${vesselId}-${index}`}
+                  finding={finding}
+                  onSelect={() => onSelectFinding(finding)}
+                  onCloseDefect={onCloseDefect}
+                  onDeleteDefect={onDeleteDefect}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <Pagination
+        page={page}
+        hasNext={hasMore}
+        total={filteredFindings.length}
+        limit={FINDINGS_PER_PAGE}
+        onPageChange={onPageChange}
+        isLoading={isLoading}
+      />
+    </div>
+  );
+}
+
+export default function ThirdPartyPage() {
+  const [fleetStats, setFleetStats] = useState<FleetStats | null>(null);
+  const [vessels, setVessels] = useState<VesselStats[]>([]);
+  const [isLoadingVessels, setIsLoadingVessels] = useState(true);
+  const [isLoadingStats, setIsLoadingStats] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [typeFilter, setTypeFilter] = useState("all");
+
+  const [activeVesselId, setActiveVesselId] = useState<string | null>(null);
+  const [activeVesselName, setActiveVesselName] = useState("");
+  const [activeVesselType, setActiveVesselType] = useState("");
+
+  const [detailFindings, setDetailFindings] = useState<DefectData[]>([]);
+  const [detailPage, setDetailPage] = useState(1);
+  const [, setDetailHasNext] = useState(false);
+  const [, setDetailTotal] = useState(0);
+  const [detailInspectionType, setDetailInspectionType] = useState(DEFAULT_INSPECTION_TYPE);
+  const [isLoadingDetail, setIsLoadingDetail] = useState(false);
+  const [selectedDefect, setSelectedDefect] = useState<DefectData | null>(null);
+  const [activeActionDefect, setActiveActionDefect] = useState<DefectData | null>(null);
+  const [activeAction, setActiveAction] = useState<"close" | "delete" | null>(null);
+  const [closingRemarks, setClosingRemarks] = useState("");
+  const [isActionSubmitting, setIsActionSubmitting] = useState(false);
+  const [toast, setToast] = useState<ActionToastState>(null);
+  const searchParams = useSearchParams();
+  const fetchFleetStatistics = useCallback(async () => {
+    setIsLoadingStats(true);
+    try {
+      const response = await defectsApi.getFleetStatistics();
+      if (response.success) {
+        setFleetStats(response.data);
+      }
+    } catch (error) {
+      console.error("Failed to fetch fleet statistics:", error);
+    } finally {
+      setIsLoadingStats(false);
+    }
+  }, []);
+
+  // Fetch vessels - USING BACKEND DATA DIRECTLY (NO EXTRA API CALLS)
+  const fetchVessels = useCallback(async () => {
+    setIsLoadingVessels(true);
+    try {
+      const response = await defectsApi.getVesselsWithStats("third_party");
+      if (!response.success || !response.data?.vessels) return;
+
+      const mapped: VesselStats[] = response.data.vessels.map((vessel) => {
+        const thirdPartyStats = vessel.third_party_stats || {};
+        
+        const inspection_counts: Partial<Record<string, number>> = {};
+        const inspection_open_counts: Partial<Record<string, number>> = {};
+        
+        // Use data from backend - NO extra API calls!
+        for (const type of THIRD_PARTY_TYPES) {
+          const stats = thirdPartyStats[type.value] || {};
+          inspection_counts[type.value] = stats.total || 0;
+          inspection_open_counts[type.value] = stats.open || 0;
         }
 
-        response.set_cookie(
-            key=key,
-            value=value,
-            httponly=cookie_params.get("httponly", True),
-            secure=cookie_params.get("secure", True),
-            samesite=cookie_params.get("samesite", "None"),
-            path=cookie_params.get("path", "/"),
-        )
+        return {
+          vessel_id: vessel.vessel_id,
+          name: vessel.name,
+          type: vessel.type,
+          imo_number: vessel.imo_number,
+          total_defects: vessel.total_defects,
+          open: vessel.open,
+          overdue: vessel.overdue,
+          closed: vessel.closed,
+          closed_percentage: vessel.closed_percentage,
+          inspection_counts,
+          inspection_open_counts,
+        };
+      });
 
-    return response
+      setVessels(mapped);
+    } catch (error) {
+      console.error("Failed to fetch vessels:", error);
+    } finally {
+      setIsLoadingVessels(false);
+    }
+  }, []);
+    useEffect(() => {
+    const vesselId = searchParams.get("vesselId");
+    const page = searchParams.get("page");
+    const type = searchParams.get("type");
+    
+    if (vesselId && vessels.length > 0) {
+      const vessel = vessels.find(v => v.vessel_id === vesselId);
+      if (vessel) {
+        setActiveVesselId(vessel.vessel_id);
+        setActiveVesselName(vessel.name);
+        setActiveVesselType(vessel.type);
+        if (type) setDetailInspectionType(type);
+        if (page) setDetailPage(parseInt(page));
+      }
+    }
+  }, [searchParams, vessels]);
+  const fetchDetailFindings = useCallback(async (vesselId: string, inspectionType: string, page: number) => {
+    setIsLoadingDetail(true);
+    try {
+      const response = await defectsApi.getAll(page, FINDINGS_PER_PAGE, inspectionType, undefined, vesselId);
 
-admin_admin_router = APIRouter(prefix="/admin/admin", tags=["Admin - Admin Management"])
+      if (!response.success) {
+        setDetailFindings([]);
+        setDetailHasNext(false);
+        setDetailTotal(0);
+        return;
+      }
 
-@admin_admin_router.post("", summary="Create Admin (Admin)")
-async def admin_create_admin_route(
-    request: Request, 
-    tenant_ctx = Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None)
-):
-    """Admin creates a new admin with documents and password."""
-    event = await lambda_to_fastapi_response(request)
-    result = admin_create_admin_handler(event, None)
-    return parse_lambda_response(result)
+      const items: DefectData[] = response.data?.items ?? [];
+      setDetailFindings(items);
+      setDetailHasNext(Boolean(response.data?.has_next));
+      const payload = response.data as typeof response.data & { total?: number };
+      setDetailTotal(payload.total ?? items.length + (response.data?.has_next ? 1 : 0));
+    } catch (error) {
+      console.error("Failed to fetch detail findings:", error);
+      setDetailFindings([]);
+      setDetailHasNext(false);
+      setDetailTotal(0);
+    } finally {
+      setIsLoadingDetail(false);
+    }
+  }, []);
 
-@admin_admin_router.get("", summary="List Admins (Admin)")
-async def admin_list_admins_route(
-    request: Request,
-    page: int = Query(1),
-    limit: int = Query(20),
-    tenant_ctx = Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None)
-):
-    """Admin lists all admins with pagination."""
-    event = await lambda_to_fastapi_response(request, query_params={"page": str(page), "limit": str(limit)})
-    result = admin_list_admins_handler(event, None)
-    return parse_lambda_response(result)
+  useEffect(() => {
+    fetchFleetStatistics();
+    fetchVessels();
+  }, [fetchFleetStatistics, fetchVessels]);
 
-@admin_admin_router.get("/{admin_id}", summary="Get Admin (Admin)")
-async def admin_get_admin_route(
-    admin_id: str, 
-    request: Request,
-    tenant_ctx = Depends(require_role("admin")), 
-    authorization: Optional[str] = Header(None)
-):
-    """Admin gets admin details by ID."""
-    event = await lambda_to_fastapi_response(request, path_params={"admin_id": admin_id})
-    result = admin_get_admin_handler(event, None)
-    return parse_lambda_response(result)
+  useEffect(() => {
+    if (!activeVesselId) return;
+    fetchDetailFindings(activeVesselId, detailInspectionType, detailPage);
+  }, [activeVesselId, detailInspectionType, detailPage, fetchDetailFindings]);
 
-@admin_admin_router.post("/{admin_id}/reset-password", summary="Reset Admin Password (Admin)")
-async def admin_reset_admin_password_route(
-    admin_id: str, 
-    request: Request,
-    tenant_ctx = Depends(require_role("admin")), 
-    authorization: Optional[str] = Header(None)
-):
-    """Admin resets an admin's password."""
-    event = await lambda_to_fastapi_response(request, path_params={"admin_id": admin_id})
-    result = admin_reset_admin_password_handler(event, None)
-    return parse_lambda_response(result)
+  const fleetKpis = useMemo(() => {
+    const thirdPartyStats = fleetStats?.third_party ?? {};
+    type FleetKpiSummary = {
+      vessels: number;
+      total: number;
+      open: number;
+      overdue: number;
+      closed: number;
+    };
 
-@admin_admin_router.delete("/{admin_id}", summary="Delete Admin (Admin)")
-async def admin_delete_admin_route(
-    admin_id: str,
-    request: Request,
-    tenant_ctx = Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None),
-):
-    """
-    Admin soft-deletes an admin by ID.
-    """
-    event = await lambda_to_fastapi_response(
-        request,
-        path_params={"admin_id": admin_id},
-    )
-    result = admin_delete_admin_handler(event, None)
-    return parse_lambda_response(result)
+    return Object.values(thirdPartyStats).reduce<FleetKpiSummary>(
+      (acc, stats) => {
+        acc.total += stats.total ?? 0;
+        acc.open += stats.open ?? 0;
+        acc.overdue += stats.overdue ?? 0;
+        acc.closed += stats.closed ?? 0;
+        return acc;
+      },
+      {
+        vessels: fleetStats?.vessels_count ?? vessels.length,
+        total: 0,
+        open: 0,
+        overdue: 0,
+        closed: 0,
+      }
+    );
+  }, [fleetStats, vessels.length]);
 
-@admin_admin_router.put("/{admin_id}", summary="Update Admin (Admin)")
-async def admin_update_admin_route(
-    admin_id: str,
-    request: Request,
-    tenant_ctx = Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None)
-):
-    """Admin updates an admin's information."""
-    event = await lambda_to_fastapi_response(
-        request,
-        path_params={"admin_id": admin_id}
-    )
-    result = admin_update_admin_handler(event, None)
-    return parse_lambda_response(result)
+  const vesselTypes = useMemo(() => Array.from(new Set(vessels.map((vessel) => vessel.type))).filter(Boolean), [vessels]);
 
-# ============================================================================
-# INSPECTOR AUTHENTICATION ROUTES
-# ============================================================================
-inspector_router = APIRouter(prefix="/inspectors", tags=["Inspector Authentication"])
+  const filteredVessels = useMemo(() => {
+    return vessels.filter((vessel) => {
+      const matchesName = vessel.name.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesType = typeFilter === "all" || vessel.type === typeFilter;
+      return matchesName && matchesType;
+    });
+  }, [searchTerm, typeFilter, vessels]);
 
-@inspector_router.post("/register", summary="Register Inspector")
-async def register_inspector_route(request: Request):
-    """Register a new inspector account."""
-    event = await lambda_to_fastapi_response(request)
-    result = inspector_register(event, None)
-    return parse_lambda_response(result)
+  const handleOpenVessel = (vessel: VesselStats) => {
+    setActiveVesselId(vessel.vessel_id);
+    setActiveVesselName(vessel.name);
+    setActiveVesselType(vessel.type);
+    setDetailPage(1);
+    setDetailInspectionType(DEFAULT_INSPECTION_TYPE);
+    setDetailFindings([]);
+    setDetailHasNext(false);
+    setDetailTotal(0);
+    setSelectedDefect(null);
+  };
 
-@inspector_router.post("/login", summary="Login Inspector")
-async def login_inspector_route(request: Request, response: Response):
-    """Login an existing inspector."""
-    event = await lambda_to_fastapi_response(request)
-    result = inspector_login(event, response)
-    return parse_lambda_response(result)
+  const handleBack = () => {
+    setActiveVesselId(null);
+    setActiveVesselName("");
+    setActiveVesselType("");
+    setDetailFindings([]);
+    setDetailPage(1);
+    setDetailHasNext(false);
+    setDetailTotal(0);
+    setDetailInspectionType(DEFAULT_INSPECTION_TYPE);
+    setSelectedDefect(null);
+  };
 
-@inspector_router.post(
-    "/change-password", summary="Complete First-Login Password Change"
-)
-async def change_inspector_password_route(request: Request, response: Response):
-    """Complete Cognito NEW_PASSWORD_REQUIRED challenge. Public — no auth cookie required."""
-    event = await lambda_to_fastapi_response(request)
-    result = inspector_change_password(event, response)
-    return parse_lambda_response(result)  # Fixed: added parse_lambda_response
-
-@inspector_router.get("/{inspector_id:uuid}", summary="Get Inspector Profile")
-async def get_inspector_profile_route(inspector_id: str, request: Request, tenant_ctx = Depends(require_role("admin"))):
-    """Get inspector profile by ID."""
-    event = await lambda_to_fastapi_response(request, path_params={"inspector_id": str(inspector_id)})
-    result = inspector_profile(event, None)
-    return parse_lambda_response(result)
-
-@inspector_router.get("/dashboard", summary="Get Inspector Dashboard")
-async def get_inspector_dashboard_route(request: Request, tenant_ctx = Depends(require_role("inspector")), authorization: Optional[str] = Header(None)):
-    """Get dashboard data for the authenticated inspector."""   
-    event = await lambda_to_fastapi_response(request)
-    result = inspector_dashboard_handler(event, None)
-    return parse_lambda_response(result)
-
-@inspector_router.post("/sync", summary="Check Inspector Sync Status")
-async def check_inspector_sync_route(request: Request, tenant_ctx = Depends(require_role("admin","inspector")), authorization: Optional[str] = Header(None)):
-    """Check sync status for the authenticated inspector."""
-    event = await lambda_to_fastapi_response(request)
-    result = inspector_sync_handler(event, None)
-    return parse_lambda_response(result)
-
-# ============================================================================
-# INSPECTOR ME ROUTE (separate to avoid path conflicts)
-# ============================================================================
-inspector_me_router = APIRouter(prefix="/inspector", tags=["Inspector Authentication"])
-
-@inspector_me_router.get("/me", summary="Get Current Inspector Profile")
-async def get_current_inspector_route(request: Request, tenant_ctx = Depends(require_role("admin","inspector")), authorization: Optional[str] = Header(None)):
-    """Get the currently authenticated inspector's profile."""
-    event = await lambda_to_fastapi_response(request)
-    result = inspector_me_handler(event, None)
-    return parse_lambda_response(result)
-
-# ============================================================================
-# ADMIN AUTHENTICATION ROUTES
-# ============================================================================
-admin_router = APIRouter(prefix="/admins", tags=["Admin Authentication"])
-
-@admin_router.post("/register", summary="Register Admin")
-async def register_admin_route(request: Request):
-    """Register a new admin account."""
-    event = await lambda_to_fastapi_response(request)
-    result = admin_register_handler(event, None)
-    return parse_lambda_response(result)
-
-@admin_router.post("/login", summary="Login Admin")
-async def login_admin_route(request: Request, response: Response):
-    """Login an existing admin."""
-    event = await lambda_to_fastapi_response(request)
-    result = admin_login_handler(event, response)
-    return parse_lambda_response(result)
-
-@admin_router.post("/change-password", summary="Complete First-Login Password Change")
-async def change_password_admin_route(request: Request, response: Response):
-    """
-    Respond to Cognito NEW_PASSWORD_REQUIRED challenge.
-    Call this when login returns requires_new_password=True.
-    """
-    event = await lambda_to_fastapi_response(request)
-    result = admin_change_password_handler(event, response)
-    return parse_lambda_response(result)
-
-@admin_router.get("/{admin_id}", summary="Get Admin Profile")
-async def get_admin_profile_route(admin_id: str, request: Request, tenant_ctx = Depends(require_role("admin"))):
-    """Get admin profile by ID."""
-    event = await lambda_to_fastapi_response(request, path_params={"admin_id": admin_id})
-    result = admin_profile_handler(event, None)
-    return parse_lambda_response(result)
-
-# ============================================================================
-# ADMIN PROFILE ROUTE (separate prefix)
-# ============================================================================
-admin_profile_router = APIRouter(prefix="/admin", tags=["Admin Authentication"])
-
-@admin_profile_router.get("/profile", summary="Get Current Admin Profile")
-async def get_current_admin_route(request: Request, tenant_ctx = Depends(require_role("admin")), authorization: Optional[str] = Header(None)):
-    """Get the currently authenticated admin's profile."""
-    event = await lambda_to_fastapi_response(request)
-    result = admin_me_handler(event, None)
-    return parse_lambda_response(result)
-
-# ============================================================================
-# ADMIN INSPECTOR MANAGEMENT ROUTES
-# ============================================================================
-admin_inspector_router = APIRouter(prefix="/admin/inspectors", tags=["Admin - Inspector Management"])
-
-@admin_inspector_router.post("", summary="Create Inspector (Admin)")
-async def admin_create_inspector_route(request: Request, tenant_ctx = Depends(require_role("admin")), authorization: Optional[str] = Header(None)):
-    """Admin creates a new inspector with documents and password."""
-    event = await lambda_to_fastapi_response(request)
-    result = admin_create_inspector_handler(event, None)
-    return parse_lambda_response(result)
-
-@admin_inspector_router.get("", summary="List Inspectors (Admin)")
-async def admin_list_inspectors_route(
-    request: Request,
-    page: int = Query(1),
-    limit: int = Query(20),
-    tenant_ctx = Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None)
-):
-    """Admin lists all inspectors with pagination."""
-    event = await lambda_to_fastapi_response(request, query_params={"page": str(page), "limit": str(limit)})
-    result = admin_list_inspectors_handler(event, None)
-    return parse_lambda_response(result)
-
-@admin_inspector_router.get("/{inspector_id}", summary="Get Inspector (Admin)")
-async def admin_get_inspector_route(inspector_id: str, request: Request, tenant_ctx = Depends(require_role("admin")), authorization: Optional[str] = Header(None)):
-    """Admin gets inspector details by ID."""
-    event = await lambda_to_fastapi_response(request, path_params={"inspector_id": inspector_id})
-    result = admin_get_inspector_handler(event, None)
-    return parse_lambda_response(result)
-
-@admin_inspector_router.put("/{inspector_id}", summary="Update Inspector (Admin)")
-async def admin_update_inspector_route(
-    inspector_id: str,
-    request: Request,
-    tenant_ctx = Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None)
-):
-    """Admin updates an inspector's information."""
-    event = await lambda_to_fastapi_response(
-        request,
-        path_params={"inspector_id": inspector_id}
-    )
-    result = admin_update_inspector_handler(event, None)
-    return parse_lambda_response(result)
-
-@admin_inspector_router.post("/{inspector_id}/reset-password", summary="Reset Inspector Password (Admin)")
-async def admin_reset_inspector_password_route(inspector_id: str, request: Request, tenant_ctx = Depends(require_role("admin")), authorization: Optional[str] = Header(None)):
-    """Admin resets an inspector's password."""
-    event = await lambda_to_fastapi_response(request, path_params={"inspector_id": inspector_id})
-    result = admin_reset_inspector_password_handler(event, None)
-    return parse_lambda_response(result)
-
-@admin_inspector_router.delete("/{inspector_id}", summary="Delete Inspector (Admin)")
-async def admin_delete_inspector_route(
-    inspector_id: str,
-    request: Request,
-    tenant_ctx = Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None),
-):
-    """
-    Admin soft-deletes an inspector by ID.
-    """
-    event = await lambda_to_fastapi_response(
-        request,
-        path_params={"inspector_id": inspector_id},
-    )
-    result = admin_delete_inspector_handler(event, None)
-    return parse_lambda_response(result)
-
-# ============================================================================
-# VESSEL MANAGEMENT ROUTES
-# ============================================================================
-vessel_router = APIRouter(prefix="/vessels", tags=["Vessel Management"])
-
-@vessel_router.post("", summary="Create Vessel")
-async def create_vessel_route(request: Request, tenant_ctx = Depends(require_role("admin")), authorization: Optional[str] = Header(None)):
-    """Create a new vessel (admin only)."""
-    event = await lambda_to_fastapi_response(request)
-    result = create_vessel_handler(event, None)
-    return parse_lambda_response(result)
-
-@vessel_router.get("", summary="List Vessels")
-async def list_vessels_route(
-    request: Request,
-    tenant_ctx = Depends(require_role("admin")),
-    page: int = Query(1),
-    limit: int = Query(20),
-    authorization: Optional[str] = Header(None)
-):
-    """List all vessels for the authenticated admin with pagination."""
-    event = await lambda_to_fastapi_response(request, query_params={"page": str(page), "limit": str(limit)})
-    result = list_vessels_handler(event, None)
-    return parse_lambda_response(result)
-
-@vessel_router.get("/{vessel_id}", summary="Get Vessel")
-async def get_vessel_route(vessel_id: str, request: Request, tenant_ctx = Depends(require_role("admin"))):
-    """Get a single vessel by ID."""
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id})
-    result = get_vessel_handler(event, None)
-    return parse_lambda_response(result)
-
-@vessel_router.put("/{vessel_id}", summary="Update Vessel")
-async def update_vessel_route(
-    vessel_id: str, 
-    request: Request, 
-    tenant_ctx = Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None)
-):
-    """Update an existing vessel (admin only)."""
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id})
-    result = update_vessel_handler(event, None)
-    return parse_lambda_response(result)
-
-@vessel_router.post("/assignments", summary="Create Vessel Assignment")
-async def create_vessel_assignment_route(request: Request, tenant_ctx = Depends(require_role("admin")), authorization: Optional[str] = Header(None)):
-    """Assign a crew member or inspector to a vessel (admin only)."""
-    event = await lambda_to_fastapi_response(request)
-    result = create_vessel_assignment_handler(event, None)
-    return parse_lambda_response(result)
-
-@vessel_router.get("/assignments/{vessel_id}", summary="Get Vessel Assignments")
-async def get_vessel_assignments_route(vessel_id: str, request: Request, tenant_ctx = Depends(require_role("admin"))):
-    """Get all assignments (crew and inspectors) for a vessel."""
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id})
-    result = get_vessel_assignments_handler(event, None)
-    return parse_lambda_response(result)
-
-@vessel_router.delete("/{vessel_id}", summary="Delete Vessel (Soft Delete)")
-async def delete_vessel_route(
-    vessel_id: str,
-    request: Request,
-    tenant_ctx = Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None)
-):
-    """Soft delete a vessel by setting status to closed. Validates no active assignments or open defects."""
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id})
-    result = delete_vessel_handler(event, None)
-    return parse_lambda_response(result)
-
-@vessel_router.delete(
-    "/assignments/{vessel_id}/{assignment_id}",
-    summary="Delete Vessel Assignment",
-)
-async def delete_vessel_assignment_route(
-    vessel_id: str,
-    assignment_id: str,
-    request: Request,
-    tenant_ctx = Depends(require_role("admin"))
-):
-    """Delete a vessel assignment by vessel_id and assignment_id (admin only)."""
-    event = await lambda_to_fastapi_response(
-        request,
-        path_params={
-            "vessel_id": vessel_id,
-            "assignment_id": assignment_id,
+  const handleSelectFinding = (finding: DefectData) => {
+    sessionStorage.setItem(
+      "defectNavigationContext",
+      JSON.stringify({
+        sourcePage: "third-party",
+        vesselId: activeVesselId,
+        currentPage: detailPage,
+        filters: {
+          inspectionType: detailInspectionType,
+          status: getEffectiveStatus(finding),
         },
-    )
-    result = delete_vessel_assignment_handler(event, None)
-    return parse_lambda_response(result)
+        defectIds: detailFindings.map((item) => item.defect_id),
+        currentIndex: detailFindings.findIndex((item) => item.defect_id === finding.defect_id),
+        timestamp: Date.now(),
+      }),
+    );
 
-@vessel_router.get("/{vessel_id}/download", summary="Download Vessel PDF")
-async def download_vessel_pdf_route(vessel_id: str, request: Request, tenant_ctx = Depends(require_role("admin"))):
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id})
-    result = download_vessel_pdf_handler(event, None)
-    return parse_lambda_response(result)
+    setSelectedDefect(finding);
+  };
 
-# Added missing vessel defect PDF download route
-@vessel_router.get(
-    "/{vessel_id}/defects/pdf", summary="Download Vessel Defect Report PDF"
-)
-async def download_defect_pdf_route(
-    vessel_id: str,
-    request: Request,
-    tenant_ctx = Depends(require_role("admin", "inspector")),
-):
-    event = await lambda_to_fastapi_response(
-        request, path_params={"vessel_id": vessel_id}
-    )
-    result = download_defect_pdf_handler(event, None)
-    return parse_lambda_response(result)
+  useEffect(() => {
+    if (!toast) return;
+    const timeoutId = window.setTimeout(() => setToast(null), 3000);
+    return () => window.clearTimeout(timeoutId);
+  }, [toast]);
 
-# ============================================================================
-# CREW MANAGEMENT ROUTES
-# ============================================================================
-crew_router = APIRouter(prefix="/crew", tags=["Crew Management"])
+  const closeActionDialog = () => {
+    if (isActionSubmitting) return;
+    setActiveAction(null);
+    setActiveActionDefect(null);
+    setClosingRemarks("");
+  };
 
-@crew_router.post("", summary="Create Crew Member")
-async def create_crew_route(request: Request, tenant_ctx = Depends(require_role("admin")), authorization: Optional[str] = Header(None)):
-    """Create a new crew member (admin only)."""
-    event = await lambda_to_fastapi_response(request)
-    result = create_crew_handler(event, None)
-    return parse_lambda_response(result)
+  const handleOpenCloseDialog = (finding: DefectData) => {
+    setActiveAction("close");
+    setActiveActionDefect(finding);
+    setClosingRemarks("");
+  };
 
-@crew_router.delete("/{crew_id}", summary="Delete Crew Member (Admin)")
-async def admin_delete_crew_route(crew_id: str, request: Request, tenant_ctx = Depends(require_role("admin")), authorization: Optional[str] = Header(None)):
-    """Admin deletes (soft delete) a crew member by ID."""
-    print("crew_id----------------------", crew_id)
-    event = await lambda_to_fastapi_response(request, path_params={"crew_id": crew_id})
-    result = admin_delete_crew_handler(event, None)
-    return parse_lambda_response(result)
+  const handleOpenDeleteDialog = (finding: DefectData) => {
+    setActiveAction("delete");
+    setActiveActionDefect(finding);
+    setClosingRemarks("");
+  };
 
-@crew_router.get("", summary="List Crew Members")
-async def list_crew_route(
-    request: Request,
-    tenant_ctx = Depends(require_role("admin")),
-    page: int = Query(1),
-    limit: int = Query(20),
-    authorization: Optional[str] = Header(None)
-):
-    """List all crew members with pagination (admin only)."""
-    event = await lambda_to_fastapi_response(request, query_params={"page": str(page), "limit": str(limit)})
-    result = list_crew_handler(event, None)
-    return parse_lambda_response(result)
+  const handleConfirmAction = async () => {
+    if (!activeAction || !activeActionDefect) return;
 
-
-@crew_router.post("/register", summary="Register Crew Member")
-async def register_crew_route(request: Request, tenant_ctx = Depends(require_role("admin","crew"))):
-    """Register a new crew member account."""
-    event = await lambda_to_fastapi_response(request)
-    result = register_crew_handler(event, None)
-    return parse_lambda_response(result)
-
-@crew_router.post("/login", summary="Login Crew Member")
-async def login_crew_route(request: Request):
-    """Login an existing crew member."""
-    event = await lambda_to_fastapi_response(request)
-    result = login_crew_handler(event, None)
-    return parse_lambda_response(result)
-
-@crew_router.get("/me", summary="Get Current Crew Profile")
-async def get_current_crew_route(request: Request, tenant_ctx = Depends(require_role("admin","crew")), authorization: Optional[str] = Header(None)):
-    """Get the currently authenticated crew member's profile."""
-    event = await lambda_to_fastapi_response(request)
-    result = crew_me_handler(event, None)
-    return parse_lambda_response(result)
-
-@crew_router.get("/dashboard", summary="Get Crew Dashboard")
-async def get_crew_dashboard_route(request: Request, tenant_ctx = Depends(require_role("crew")), authorization: Optional[str] = Header(None)):
-    """Get dashboard data for the authenticated crew member."""
-    event = await lambda_to_fastapi_response(request)
-    result = crew_dashboard_handler(event, None)
-    return parse_lambda_response(result)
-
-@crew_router.post("/sync", summary="Check Crew Sync Status")
-async def check_crew_sync_route(request: Request, tenant_ctx = Depends(require_role("crew")), authorization: Optional[str] = Header(None)):
-    """Check sync status for the authenticated crew member."""
-    event = await lambda_to_fastapi_response(request)
-    result = crew_sync_handler(event, None)
-    return parse_lambda_response(result)
-
-@crew_router.get("/assignments", summary="List Crew Assignments")
-async def list_crew_assignments_route(request: Request, tenant_ctx = Depends(require_role("admin","crew")), authorization: Optional[str] = Header(None)):
-    """List inspection assignments for the authenticated crew member."""
-    event = await lambda_to_fastapi_response(request)
-    result = list_crew_assignments_handler(event, None)
-    return parse_lambda_response(result)
-@crew_router.get("/assignments/{vessel_id}/{assignment_id}", summary="Get Crew Assignment by ID")
-async def get_crew_assignment_route(
-    vessel_id: str,
-    assignment_id: str,
-    request: Request,
-    tenant_ctx = Depends(require_role("crew")),
-    authorization: Optional[str] = Header(None)
-):
-    """Get inspection assignment by ID for the authenticated crew member."""
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "assignment_id": assignment_id})
-    result = get_inspection_assignment_handler(event, None)
-    return parse_lambda_response(result)
-
-@crew_router.post("/assignments/{vessel_id}/{assignment_id}/comments", summary="Add Comment to Assignment (Crew)")
-async def crew_add_assignment_comment_route(
-    vessel_id: str,
-    assignment_id: str,
-    request: Request,
-    tenant_ctx = Depends(require_role("crew","admin","inspector")),
-    authorization: Optional[str] = Header(None)
-):
-    """Add crew comment to inspection assignment."""
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "assignment_id": assignment_id})
-    result = add_crew_comment_to_assignment_handler(event, None)
-    return parse_lambda_response(result)
-
-@crew_router.get("/{crew_id}", summary="Get Crew Member")
-async def get_crew_route(crew_id: str, request: Request, tenant_ctx = Depends(require_role("admin","crew"))):
-    """Get crew member details by ID."""
-    event = await lambda_to_fastapi_response(request, path_params={"crew_id": crew_id})
-    result = get_crew_handler(event, None)
-    return parse_lambda_response(result)
-@crew_router.post("/{crew_id}/inspection-assignments", summary="Create Crew Inspection Assignment")
-async def create_crew_inspection_assignment_route(crew_id: str, request: Request, tenant_ctx = Depends(require_role("admin","crew")), authorization: Optional[str] = Header(None)):
-    """Create a single inspection assignment to a crew member."""
-    event = await lambda_to_fastapi_response(request, path_params={"crew_id": crew_id})
-    result = create_crew_inspection_assignment_handler(event, None)
-    return parse_lambda_response(result)
-
-@crew_router.post(
-    "/{vessel_id}/{assignment_id}/extension-request",
-    summary="Request Inspection Due Date Extension (Crew)",
-)
-async def request_crew_inspection_extension_route(
-    vessel_id: str,
-    assignment_id: str,
-    request: Request,
-    tenant_ctx=Depends(require_role("crew")),
-    authorization: Optional[str] = Header(None),
-):
-    """Crew requests a due date extension for an inspection assignment."""
-    event = await lambda_to_fastapi_response(
-        request,
-        path_params={"vessel_id": vessel_id, "assignment_id": assignment_id},
-    )
-    result = request_crew_inspection_extension_handler(event, None)
-    return parse_lambda_response(result)
-# ============================================================================
-# CREW FORM ROUTES (Added missing router)
-# ============================================================================
-crew_form_router = APIRouter(prefix="/crew/forms", tags=["Crew - Inspection Forms"])
-
-@crew_form_router.get("", summary="List Crew Forms")
-async def list_crew_forms_route(
-    request: Request,
-    tenant_ctx=Depends(require_role("crew")),
-    authorization: Optional[str] = Header(None),
-):
-    """List inspection forms assigned to the authenticated crew member."""
-    event = await lambda_to_fastapi_response(request)
-    result = list_inspector_forms_handler(event, None)
-    return parse_lambda_response(result)
-
-@crew_form_router.post(
-    "/{vessel_id}/{form_id}/submit", summary="Submit Inspection Form (Crew)"
-)
-async def crew_submit_form_route(
-    vessel_id: str,
-    form_id: str,
-    request: Request,
-    tenant_ctx=Depends(require_role("crew")),
-    authorization: Optional[str] = Header(None),
-):
-    """Submit/fill an inspection form by the authenticated crew member."""
-    event = await lambda_to_fastapi_response(
-        request, path_params={"vessel_id": vessel_id, "form_id": form_id}
-    )
-    result = submit_inspection_form_handler(event, None)
-    return parse_lambda_response(result)
-
-# ============================================================================
-# ADMIN CREW ROUTES
-# ============================================================================
-admin_crew_router = APIRouter(prefix="/admin/crew", tags=["Admin - Crew Management"])
-@admin_crew_router.put("/{crew_id}", summary="Update Crew (Admin)")
-async def admin_update_crew_route(
-    crew_id: str,
-    request: Request,
-    tenant_ctx = Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None)
-):
-    """Admin updates a crew member's information."""
-    event = await lambda_to_fastapi_response(
-        request,
-        path_params={"crew_id": crew_id}
-    )
-    result = admin_update_crew_handler(event, None)
-    return parse_lambda_response(result)
-
-@admin_crew_router.post("/{crew_id}/reset-password", summary="Reset Crew Password (Admin)")
-async def admin_reset_crew_password_route(crew_id: str, request: Request, tenant_ctx = Depends(require_role("admin")), authorization: Optional[str] = Header(None)):
-    """Admin resets a crew member's password."""
-    event = await lambda_to_fastapi_response(request, path_params={"crew_id": crew_id})
-    result = admin_reset_crew_password_handler(event, None)
-    return parse_lambda_response(result)
-
-# ============================================================================
-# INSPECTION FORM ROUTES
-# ============================================================================
-form_router = APIRouter(prefix="/forms", tags=["Inspection Forms"])
-
-@form_router.post("", summary="Create Inspection Form")
-async def create_form_route(request: Request, tenant_ctx = Depends(require_role("admin")), authorization: Optional[str] = Header(None)):
-    """Create a new inspection form with ordered questions."""
-    event = await lambda_to_fastapi_response(request)
-    result = create_inspection_form_handler(event, None)
-    return parse_lambda_response(result)
-
-@form_router.get("", summary="List Inspection Forms")
-async def list_forms_route(request: Request, tenant_ctx = Depends(require_role("admin")), authorization: Optional[str] = Header(None)):
-    """List inspection forms with pagination."""
-    event = await lambda_to_fastapi_response(request)
-    result = list_inspection_forms_handler(event, None)
-    return parse_lambda_response(result)
-
-@form_router.get("/templates", summary="List Templates Forms")
-async def list_templates_route(request: Request, tenant_ctx = Depends(require_role("admin")), authorization: Optional[str] = Header(None)):
-    """List Templates forms with pagination."""
-    event = await lambda_to_fastapi_response(request)
-    result = list_template_forms_handler(event, None)
-    return parse_lambda_response(result)
-
-@form_router.get("/template/{template_name}", summary="Get Template Form")
-async def get_template_route(template_name: str, request: Request=None, tenant_ctx = Depends(require_role("admin","inspector","crew"))):
-    """Get template form by Name."""
-    event = await lambda_to_fastapi_response(request, path_params={"title": template_name})
-    result = get_template_form_handler(event, None)
-    return parse_lambda_response(result)
-
-@form_router.post("/attach-template", summary="Attach Template Form")
-async def attach_template_route(request: Request, tenant_ctx = Depends(require_role("admin")), authorization: Optional[str] = Header(None)):
-    """attach a new form with ordered questions."""
-    event = await lambda_to_fastapi_response(request)
-    result = attach_template_form_handler(event, None)
-    return parse_lambda_response(result)
-
-@form_router.get("/{form_id}", summary="Get Inspection Form")
-async def get_form_route(form_id: str,vessel_id: Optional[str] = Query(None), inspection_id: Optional[str] = Query(None), request: Request=None, tenant_ctx = Depends(require_role("admin","inspector","crew"))):
-    """Get inspection form by ID."""
-    event = await lambda_to_fastapi_response(request, path_params={"form_id": form_id}, query_params={"vessel_id": vessel_id,"inspection_id": inspection_id})
-    result = get_inspection_form_handler(event, None)
-    return parse_lambda_response(result)
-
-@form_router.put("/{form_id}", summary="Update Inspection Form")
-async def update_form_route(
-    form_id: str, 
-    request: Request, 
-    tenant_ctx = Depends(require_role("admin")),  # Fixed: moved Depends to correct position
-    authorization: Optional[str] = Header(None)
-):
-    """Update inspection form by ID (admin only)."""
-    event = await lambda_to_fastapi_response(request, path_params={"form_id": form_id})
-    result = update_inspection_form_handler(event, None)
-    return parse_lambda_response(result)
-
-@form_router.delete("/{form_id}", summary="Delete Inspection Form")
-async def delete_form_route(form_id: str, request: Request, tenant_ctx = Depends(require_role("admin")), authorization: Optional[str] = Header(None)):
-    """Deactivate an inspection form by ID (admin only)."""
-    event = await lambda_to_fastapi_response(request, path_params={"form_id": form_id})
-    result = delete_inspection_form_handler(event, None)
-    return parse_lambda_response(result)
-
-@form_router.get("/{form_id}/export", summary="Export Form to Excel")
-async def export_form_route(form_id: str, request: Request, tenant_ctx=Depends(require_role("admin")), authorization: Optional[str] = Header(None)):
-    event = await lambda_to_fastapi_response(request, path_params={"form_id": form_id})
-    result = export_form_excel_handler(event, None)
-    return parse_lambda_response(result)
-
-@form_router.get("/templates/{template_name}/export", summary="Export Template to Excel")
-async def export_template_route(template_name: str, request: Request, tenant_ctx=Depends(require_role("admin")), authorization: Optional[str] = Header(None)):
-    event = await lambda_to_fastapi_response(request, path_params={"template_name": template_name})
-    result = export_template_excel_handler(event, None)
-    return parse_lambda_response(result)
-# ============================================================================
-# INSPECTOR FORM ROUTES
-# ============================================================================
-inspector_form_router = APIRouter(prefix="/inspectors/forms", tags=["Inspector - Inspection Forms"])
-
-@inspector_form_router.get("", summary="List Inspector Forms")
-async def list_inspector_forms_route(request: Request, tenant_ctx = Depends(require_role("admin","inspector")), authorization: Optional[str] = Header(None)):
-    """List inspection forms assigned to the authenticated inspector."""
-    event = await lambda_to_fastapi_response(request)
-    result = list_inspector_forms_handler(event, None)
-    return parse_lambda_response(result)
-
-@inspector_form_router.post("/{vessel_id}/{form_id}/submit", summary="Submit Inspection Form")
-async def submit_form_route(vessel_id: str, form_id: str, request: Request, tenant_ctx = Depends(require_role("admin","inspector")), authorization: Optional[str] = Header(None)):
-    """Submit/fill an inspection form by the authenticated inspector."""
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "form_id": form_id})
-    result = submit_inspection_form_handler(event, None)
-    return parse_lambda_response(result)
-
-# ============================================================================
-# ADMIN FORM ROUTES
-# ============================================================================
-admin_form_router = APIRouter(prefix="/admin/forms", tags=["Admin - Inspection Forms"])
-
-@admin_form_router.get("/submitted", summary="List Submitted Forms (Admin)")
-async def list_submitted_forms_route(request: Request, tenant_ctx = Depends(require_role("admin")), authorization: Optional[str] = Header(None)):
-    """List submitted (Closed) forms with answers for admin view."""
-    event = await lambda_to_fastapi_response(request)
-    result = list_submitted_forms_handler(event, None)
-    return parse_lambda_response(result)
-
-# ============================================================================
-# INSPECTION ASSIGNMENT ROUTES
-# ============================================================================
-assignment_router = APIRouter(prefix="/inspection-assignments", tags=["Inspection Assignments"])
-
-@assignment_router.post("", summary="Create Inspection Assignment")
-async def create_assignment_route(request: Request, tenant_ctx = Depends(require_role("admin")), authorization: Optional[str] = Header(None)):
-    """Create a new inspection assignment."""
-    event = await lambda_to_fastapi_response(request)
-    result = create_inspection_assignment_handler(event, None)
-    return parse_lambda_response(result)
-
-@assignment_router.post("/bulk", summary="Bulk Create Inspection Assignments")
-async def bulk_create_assignment_route(request: Request, tenant_ctx = Depends(require_role("admin")), authorization: Optional[str] = Header(None)):
-    """Create multiple inspection assignments to an inspector."""
-    event = await lambda_to_fastapi_response(request)
-    result = bulk_create_inspection_assignment_handler(event, None)
-    return parse_lambda_response(result)
-
-@assignment_router.get("", summary="List Inspection Assignments")
-async def list_assignments_route(request: Request, tenant_ctx = Depends(require_role("admin")), authorization: Optional[str] = Header(None)):
-    """List inspection assignments with pagination."""
-    event = await lambda_to_fastapi_response(request)
-    result = list_inspection_assignments_handler(event, None)
-    return parse_lambda_response(result)
-
-@assignment_router.get("/latest", summary="List Inspection Assignments latest")
-async def list_assignments_latest_route(request: Request, tenant_ctx = Depends(require_role("admin")), authorization: Optional[str] = Header(None)):
-    """List inspection assignments with pagination latest."""
-    event = await lambda_to_fastapi_response(request)
-    result = list_inspection_assignments_latest(event, None)
-    return parse_lambda_response(result)
-
-@assignment_router.put("/{vessel_id}/{assignment_id}", summary="Update Inspection Assignment")
-async def update_assignment_route(
-    request: Request,
-    vessel_id: str,
-    assignment_id: str,
-    tenant_ctx = Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None)
-):
-    """Update an existing inspection assignment."""
-    event = await lambda_to_fastapi_response(request)
-    # Add path parameters to event
-    event["pathParameters"] = {
-        "vessel_id": vessel_id,
-        "assignment_id": assignment_id
+    const vesselId = activeActionDefect.vessel_id || activeVesselId;
+    if (!vesselId) {
+      setToast({ type: "error", message: "Unable to identify the vessel for this defect" });
+      return;
     }
-    result = update_inspection_assignment_handler(event, None)
-    return parse_lambda_response(result)
 
-# Added missing assignment download by ID route
-@assignment_router.get("/{assignment_id}/download-pdf", summary="Download Inspection Report PDF")
-async def download_inspection_pdf_route_by_id(
-    assignment_id: str,
-    request: Request,
-    tenant_ctx=Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None),
-):
-    """Generate inspection PDF, upload to S3, and return a presigned download URL."""
-    event = await lambda_to_fastapi_response(
-        request, path_params={"assignment_id": assignment_id}
-    )
-    result = download_inspection_pdf_handler(event, None)
-    return parse_lambda_response(result)
+    setIsActionSubmitting(true);
+    try {
+      if (activeAction === "close") {
+        const response = await defectsApi.closeDefect(vesselId, activeActionDefect.defect_id);
+        if (!response.success) throw new Error(response.message || "Failed to close defect");
+      } else {
+        const response = await defectsApi.delete(vesselId, activeActionDefect.defect_id);
+        if (!response.success) throw new Error(response.message || "Failed to delete defect");
+      }
 
-@assignment_router.get("/{vessel_id}/{assignment_id}", summary="Get Inspection Assignment")
-async def get_assignment_route(vessel_id: str, assignment_id: str, request: Request, tenant_ctx = Depends(require_role("admin"))):
-    """Get inspection assignment by ID."""
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "assignment_id": assignment_id})
-    result = get_inspection_assignment_handler(event, None)
-    return parse_lambda_response(result)
+      if (activeAction === "delete") {
+        setSelectedDefect((current) => (current?.defect_id === activeActionDefect.defect_id ? null : current));
+      }
 
-@assignment_router.post("/{vessel_id}/{assignment_id}/comments", summary="Add Comment to Inspection Assignment (Admin)")
-async def add_assignment_comment_route(
-    vessel_id: str, 
-    assignment_id: str, 
-    request: Request, 
-    tenant_ctx = Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None)
-):
-    """Add admin comment to inspection assignment."""
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "assignment_id": assignment_id})
-    result = add_admin_comment_to_assignment_handler(event, None)
-    return parse_lambda_response(result)
+      setActiveAction(null);
+      setActiveActionDefect(null);
+      setClosingRemarks("");
 
-@assignment_router.delete("/{vessel_id}/{assignment_id}/{form_id}", summary="Delete Inspection Assignment")
-async def delete_assignment_route(vessel_id: str, assignment_id: str, form_id: str, request: Request, tenant_ctx = Depends(require_role("admin"))):
-    """Remove a form from its assignment by form_id."""
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "assignment_id": assignment_id, "form_id": form_id})
-    result = delete_inspection_assignment_handler(event, None)
-    return parse_lambda_response(result)
-
-@assignment_router.get("/{vessel_id}/{assignment_id}/download", summary="Download Inspection Report PDF")
-async def download_inspection_pdf_route(vessel_id: str, assignment_id: str, request: Request, tenant_ctx = Depends(require_role("admin")), authorization: Optional[str] = Header(None)):
-    """Download inspection report as PDF."""
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "assignment_id": assignment_id})
-    result = await download_inspection_pdf_handler(event, None)
-    return parse_lambda_response(result)
-
-@assignment_router.post("/{vessel_id}/{assignment_id}/ai-analysis", summary="Trigger AI Analysis for Inspection")
-async def trigger_ai_analysis_route(
-    request: Request,
-    vessel_id: str,
-    assignment_id: str,
-    tenant_ctx = Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None)
-):
-    """Trigger AI analysis for all questions in an inspection."""
-    event = await lambda_to_fastapi_response(request)
-    event["pathParameters"] = {
-        "vessel_id": vessel_id,
-        "assignment_id": assignment_id
+      if (activeVesselId) {
+        await fetchDetailFindings(activeVesselId, detailInspectionType, detailPage);
+      }
+      await fetchFleetStatistics();
+      await fetchVessels();
+      setToast({
+        type: "success",
+        message: activeAction === "close" ? "Defect closed successfully" : "Defect deleted successfully",
+      });
+    } catch (error) {
+      console.error(`Failed to ${activeAction} defect:`, error);
+      setToast({
+        type: "error",
+        message: error instanceof Error ? error.message : `Failed to ${activeAction} defect`,
+      });
+    } finally {
+      setIsActionSubmitting(false);
     }
-    result = trigger_inspection_ai_analysis_handler(event, None)
-    return parse_lambda_response(result)
-
-@assignment_router.get("/{vessel_id}/{assignment_id}/ai-analysis/progress", summary="Get AI Analysis Progress")
-async def get_ai_analysis_progress_route(
-    request: Request,
-    vessel_id: str,
-    assignment_id: str,
-    tenant_ctx = Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None)
-):
-    """Get progress of AI analysis for an inspection."""
-    event = await lambda_to_fastapi_response(request)
-    event["pathParameters"] = {
-        "vessel_id": vessel_id,
-        "assignment_id": assignment_id
-    }
-    result = get_ai_analysis_progress_handler(event, None)
-    return parse_lambda_response(result)
-
-@assignment_router.post(
-    "/{vessel_id}/{assignment_id}/ai-analysis/retry-sections", 
-    summary="Retry Failed AI Analysis Sections"
-)
-async def retry_ai_analysis_sections_route(
-    request: Request,
-    vessel_id: str,
-    assignment_id: str,
-    tenant_ctx = Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None)
-):
-    """Retry selected failed AI analysis sections and regenerate the overall summary afterward."""
-    event = await lambda_to_fastapi_response(request)
-    event["pathParameters"] = {
-        "vessel_id": vessel_id,
-        "assignment_id": assignment_id
-    }
-    result = retry_inspection_ai_sections_handler(event, None)
-    return parse_lambda_response(result)
-
-@assignment_router.post(
-    "/{vessel_id}/{assignment_id}/extension-request",
-    summary="Request Inspection Due Date Extension (Inspector)",
-)
-async def request_inspector_inspection_extension_route(
-    vessel_id: str,
-    assignment_id: str,
-    request: Request,
-    tenant_ctx=Depends(require_role("admin", "inspector")),
-    authorization: Optional[str] = Header(None),
-):
-    """Inspector requests a due date extension for an inspection assignment."""
-    event = await lambda_to_fastapi_response(
-        request,
-        path_params={"vessel_id": vessel_id, "assignment_id": assignment_id},
-    )
-    result = request_inspector_inspection_extension_handler(event, None)
-    return parse_lambda_response(result)
-
-@assignment_router.post(
-    "/{vessel_id}/{assignment_id}/extension-request/review",
-    summary="Review Inspection Due Date Extension",
-)
-async def review_inspection_extension_route(
-    vessel_id: str,
-    assignment_id: str,
-    request: Request,
-    tenant_ctx=Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None),
-):
-    """Admin approves or rejects an inspection due date extension request."""
-    event = await lambda_to_fastapi_response(
-        request,
-        path_params={"vessel_id": vessel_id, "assignment_id": assignment_id},
-    )
-    result = review_inspection_extension_handler(event, None)
-    return parse_lambda_response(result)
-# ============================================================================
-# INSPECTOR ASSIGNMENT ROUTES
-# ============================================================================
-inspector_assignment_router = APIRouter(prefix="/inspectors/assignments", tags=["Inspector - Assignments"])
-@inspector_assignment_router.get("/{vessel_id}/{assignment_id}", summary="Get Inspector Assignment by ID")
-async def get_inspector_assignment_route(
-    vessel_id: str, 
-    assignment_id: str, 
-    request: Request, 
-    tenant_ctx = Depends(require_role("inspector")),
-    authorization: Optional[str] = Header(None)
-):
-    """Get inspection assignment by ID for the authenticated inspector."""
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "assignment_id": assignment_id})
-    result = get_inspection_assignment_handler(event, None)
-    return parse_lambda_response(result)
-
-@inspector_assignment_router.post("/{vessel_id}/{assignment_id}/comments", summary="Add Comment to Assignment (Inspector)")
-async def inspector_add_assignment_comment_route(
-    vessel_id: str, 
-    assignment_id: str, 
-    request: Request, 
-    tenant_ctx = Depends(require_role("inspector","crew")),
-    authorization: Optional[str] = Header(None)
-):
-    """Add inspector comment to inspection assignment."""
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "assignment_id": assignment_id})
-    result = add_inspector_comment_to_assignment_handler(event, None)
-    return parse_lambda_response(result)
-
-@inspector_assignment_router.get("", summary="List Inspector Assignments")
-async def list_inspector_assignments_route(request: Request, tenant_ctx = Depends(require_role("admin","inspector")), authorization: Optional[str] = Header(None)):
-    """List inspection assignments for the authenticated inspector."""
-    event = await lambda_to_fastapi_response(request)
-    result = list_inspector_assignments_handler(event, None)
-    return parse_lambda_response(result)
-
-@inspector_assignment_router.post(
-    "/{vessel_id}/{assignment_id}/extension-request",
-    summary="Request Inspection Due Date Extension (Inspector)",
-)
-async def request_inspector_inspection_extension_route(
-    vessel_id: str,
-    assignment_id: str,
-    request: Request,
-    tenant_ctx=Depends(require_role("admin", "inspector")),
-    authorization: Optional[str] = Header(None),
-):
-    """Inspector requests a due date extension for an inspection assignment."""
-    event = await lambda_to_fastapi_response(
-        request,
-        path_params={"vessel_id": vessel_id, "assignment_id": assignment_id},
-    )
-    result = request_inspector_inspection_extension_handler(event, None)
-    return parse_lambda_response(result)
-# ============================================================================
-# DEFECT MANAGEMENT ROUTES (ADMIN)
-# ============================================================================
-admin_defect_router = APIRouter(prefix="/admin/defects", tags=["Admin - Defect Management"])
-
-# @admin_defect_router.get("", summary="List Defects (Admin)")
-# async def list_defects_route(request: Request, tenant_ctx = Depends(require_role("admin")), authorization: Optional[str] = Header(None)):
-#     """List defects with pagination and optional filtering."""
-#     event = await lambda_to_fastapi_response(request)
-#     result = list_defects_handler(event, None)
-#     return parse_lambda_response(result)
-
-@admin_defect_router.get("", summary="List Defects (Admin)")
-async def list_defects_route(
-    request: Request,
-    page: int = Query(1, ge=1, description="Page number"),
-    limit: int = Query(20, ge=1, le=100, description="Items per page"),
-    inspection_type: Optional[str] = Query(None, description="Filter by inspection type (INSPECTION, AUDIT, vessel_inspection, psc_inspection, etc.)"),
-    event_type: Optional[str] = Query(None, description="Filter by event type (Vessel Defect, Near Miss, Deficiency, etc.)"),
-    vessel_id: Optional[str] = Query(None, description="Filter by vessel ID"),
-    status: Optional[str] = Query(None, description="Filter by status (open, closed, resolved)"),
-    assignment_id: Optional[str] = Query(None, description="Filter by assignment ID"),
-    tenant_ctx = Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None),
-):
-    """List defects with pagination and advanced filtering using GSI2."""
-    query_params = {
-        "page": page,
-        "limit": limit,
-    }
-    if inspection_type:
-        query_params["inspection_type"] = inspection_type
-    if event_type:
-        query_params["event_type"] = event_type
-    if vessel_id:
-        query_params["vessel_id"] = vessel_id
-    if status:
-        query_params["status"] = status
-    if assignment_id:
-        query_params["assignment_id"] = assignment_id
-    
-    event = await lambda_to_fastapi_response(request, query_params=query_params)
-    result = list_defects_handler(event, None)
-    return parse_lambda_response(result)
-
-@admin_defect_router.get("/vessels/{vessel_id}/defects", summary="List Vessel Defects")
-async def list_vessel_defects_route(
-    vessel_id: str,
-    request: Request,
-    page: int = Query(1, ge=1),
-    limit: int = Query(10, ge=1, le=50),
-    inspection_type: Optional[str] = Query(None),
-    event_type: Optional[str] = Query(None),
-    status: Optional[str] = Query(None),
-    tenant_ctx = Depends(require_role("admin", "inspector", "crew")),
-):
-    """List defects for a vessel with pagination (10 per page)."""
-    query_params = {"page": page, "limit": limit}
-    if inspection_type:
-        query_params["inspection_type"] = inspection_type
-    if event_type:
-        query_params["event_type"] = event_type
-    if status:
-        query_params["status"] = status
-    
-    event = await lambda_to_fastapi_response(
-        request, path_params={"vessel_id": vessel_id}, query_params=query_params
-    )
-    result = list_vessel_defects_handler(event, None)
-    return parse_lambda_response(result)
-
-@admin_defect_router.get("/statistics/fleet", summary="Get Fleet Statistics")
-async def get_fleet_statistics_route(
-    request: Request,
-    tenant_ctx = Depends(require_role("admin")),
-):
-    """Get aggregated fleet statistics for all vessels."""
-    event = await lambda_to_fastapi_response(request)
-    result = get_fleet_statistics_handler(event, None)
-    return parse_lambda_response(result)
-
-@admin_defect_router.get("/vessels/statistics", summary="Get Vessels with Statistics")
-async def get_vessels_with_statistics_route(
-    request: Request,
-    type: str = "vessel_defect",  # Query param: vessel_defect, near_miss, third_party, internal_inspection
-    tenant_ctx = Depends(require_role("admin")),
-):
-    """Get all vessels with pre-calculated statistics for vessel cards."""
-    event = await lambda_to_fastapi_response(request)
-    # Add type to query params
-    event["queryStringParameters"] = {"type": type}
-    result = get_vessels_with_statistics_handler(event, None)
-    return parse_lambda_response(result)
-
-@admin_defect_router.get("/{vessel_id}/excel", summary="Download Defects Excel Report")
-async def download_defect_excel_route(
-    vessel_id: str,
-    request: Request,
-    start_date: Optional[str] = Query(None, description="Start date filter (YYYY-MM-DD)"),
-    end_date: Optional[str] = Query(None, description="End date filter (YYYY-MM-DD)"),
-    inspection_type: Optional[str] = Query(None, description="Filter by inspection type"),
-    event_type: Optional[str] = Query(None, description="Filter by event type"),
-    include_all: bool = Query(False, description="Include all defects without date filter"),
-    assignment_id: Optional[str] = Query(None, description="Filter by assignment ID"),
-    tenant_ctx = Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None),
-):
-    """Download defect report as Excel with optional filters."""
-    query_params = {}
-    if start_date:
-        query_params["start_date"] = start_date
-    if end_date:
-        query_params["end_date"] = end_date
-    if inspection_type:
-        query_params["inspection_type"] = inspection_type
-    if event_type:
-        query_params["event_type"] = event_type
-    if include_all:
-        query_params["include_all"] = "true"
-    if assignment_id:
-        query_params["assignment_id"] = assignment_id
-    
-    event = await lambda_to_fastapi_response(
-        request, 
-        path_params={"vessel_id": vessel_id},
-        query_params=query_params
-    )
-    result = download_defect_excel_handler(event, None)
-    return parse_lambda_response(result)
-
-@admin_defect_router.get("/{vessel_id}/pdf", summary="Download Defects PDF Report")
-async def download_defect_pdf_with_filters_route(
-    vessel_id: str,
-    request: Request,
-    start_date: Optional[str] = Query(None, description="Start date filter (YYYY-MM-DD)"),
-    end_date: Optional[str] = Query(None, description="End date filter (YYYY-MM-DD)"),
-    inspection_type: Optional[str] = Query(None, description="Filter by inspection type"),
-    event_type: Optional[str] = Query(None, description="Filter by event type"),
-    include_all: bool = Query(False, description="Include all defects without date filter"),
-    assignment_id: Optional[str] = Query(None, description="Filter by assignment ID"),
-    tenant_ctx = Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None),
-):
-    """Download defect report as PDF with optional filters."""
-    query_params = {}
-    if start_date:
-        query_params["start_date"] = start_date
-    if end_date:
-        query_params["end_date"] = end_date
-    if inspection_type:
-        query_params["inspection_type"] = inspection_type
-    if event_type:
-        query_params["event_type"] = event_type
-    if include_all:
-        query_params["include_all"] = "true"
-    if assignment_id:
-        query_params["assignment_id"] = assignment_id
-    
-    event = await lambda_to_fastapi_response(
-        request, 
-        path_params={"vessel_id": vessel_id},
-        query_params=query_params
-    )
-    result = download_defect_pdf_with_filters_handler(event, None)
-    return parse_lambda_response(result)
-
-@admin_defect_router.get("/{vessel_id}/{defect_id}", summary="Get Defect (Admin)")
-async def get_defect_route(vessel_id: str, defect_id: str, request: Request, tenant_ctx = Depends(require_role("admin"))):
-    """Get defect by ID."""
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "defect_id": defect_id})
-    result = get_defect_handler(event, None)
-    return parse_lambda_response(result)
-
-@admin_defect_router.put("/{vessel_id}/{defect_id}", summary="Update Defect")
-async def update_defect_route(
-    vessel_id: str, 
-    defect_id: str, 
-    request: Request, 
-    tenant_ctx = Depends(require_role("admin", "inspector", "crew")), 
-    authorization: Optional[str] = Header(None)
-):
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "defect_id": defect_id})
-    result = update_defect_handler(event, None)
-    return parse_lambda_response(result)
-
-
-@admin_defect_router.put("/{vessel_id}/{defect_id}/analysis", summary="Update Defect Analysis (Admin)")
-async def update_defect_analysis_route(
-    vessel_id: str, 
-    defect_id: str, 
-    request: Request, 
-    tenant_ctx = Depends(require_role("admin")), 
-    authorization: Optional[str] = Header(None)
-):
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "defect_id": defect_id})
-    result = update_defect_analysis_admin_handler(event, None)
-    return parse_lambda_response(result)
-
-@admin_defect_router.post("/{vessel_id}/{defect_id}/approve", summary="Approve Defect Resolution")
-async def approve_defect_route(vessel_id: str, defect_id: str, request: Request, tenant_ctx = Depends(require_role("admin")), authorization: Optional[str] = Header(None)):
-    """Approve defect resolution."""
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "defect_id": defect_id})
-    result = approve_defect_handler(event, None)
-    return parse_lambda_response(result)
-
-@admin_defect_router.post("/{vessel_id}/{defect_id}/close", summary="Close Defect")
-async def close_defect_route(vessel_id: str, defect_id: str, request: Request, tenant_ctx = Depends(require_role("admin")), authorization: Optional[str] = Header(None)):
-    """Close defect."""
-    print("hitted this")
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "defect_id": defect_id})
-    result = close_defect_handler(event, None)
-    return parse_lambda_response(result)
-
-@admin_defect_router.post("/{vessel_id}/{defect_id}/comments", summary="Add Defect Comment")
-async def add_defect_comment_route(vessel_id: str, defect_id: str, request: Request, tenant_ctx = Depends(require_role("admin")), authorization: Optional[str] = Header(None)):
-    """Add admin comment to defect."""
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "defect_id": defect_id})
-    result = add_comment_handler(event, None)
-    return parse_lambda_response(result)
-
-@admin_defect_router.put("{vessel_id}/{defect_id}", summary="Update Defect")
-async def update_defect_route(vessel_id: str, defect_id: str, request: Request, tenant_ctx = Depends(require_role("admin")), authorization: Optional[str] = Header(None)):
-    """Update defect fields."""
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "defect_id": defect_id})
-    result = update_defect_handler(event, None)
-    return parse_lambda_response(result)
-
-@admin_defect_router.delete("/{vessel_id}/{defect_id}", summary="Delete Defect")
-async def delete_defect_route(vessel_id: str, defect_id: str, request: Request, tenant_ctx = Depends(require_role("admin")), authorization: Optional[str] = Header(None)):
-    """Delete a defect permanently."""
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "defect_id": defect_id})
-    result = delete_defect_handler(event, None)
-    return parse_lambda_response(result)
-# Add these to admin_defect_router in your local code:
-
-@admin_defect_router.post(
-    "/{vessel_id}/{defect_id}/extension-request/review",
-    summary="Review Defect Due Date Extension",
-)
-async def review_defect_extension_route(
-    vessel_id: str,
-    defect_id: str,
-    request: Request,
-    tenant_ctx=Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None),
-):
-    """Admin approves or rejects a defect due date extension request."""
-    event = await lambda_to_fastapi_response(
-        request,
-        path_params={"vessel_id": vessel_id, "defect_id": defect_id},
-    )
-    result = review_extension_handler(event, None)
-    return parse_lambda_response(result)
-
-
-# ============================================================================
-# INSPECTOR DEFECT ROUTES
-# ============================================================================
-inspector_defect_router = APIRouter(prefix="/inspectors/defects", tags=["Inspector - Defects"])
-
-@inspector_defect_router.post("", summary="Create Defect (Inspector)")
-async def create_inspector_defect_route(request: Request, tenant_ctx = Depends(require_role("admin","inspector")), authorization: Optional[str] = Header(None)):
-    """Inspector creates a new defect from the mobile/web app."""
-    event = await lambda_to_fastapi_response(request)
-    result = create_inspector_defect_handler(event, None)
-    return parse_lambda_response(result)
-
-@inspector_defect_router.get("", summary="List Inspector Defects")
-async def list_inspector_defects_route(
-    request: Request,
-    page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
-    inspection_type: Optional[str] = Query(None, description="Filter by inspection type"),
-    event_type: Optional[str] = Query(None, description="Filter by event type"),
-    vessel_id: Optional[str] = Query(None, description="Filter by vessel ID"),
-    status: Optional[str] = Query(None, description="Filter by status"),
-    assignment_id: Optional[str] = Query(None, description="Filter by assignment ID"),
-    tenant_ctx = Depends(require_role("admin", "inspector")),
-    authorization: Optional[str] = Header(None),
-):
-    """List defects raised by the authenticated inspector with filters."""
-    query_params = {"page": page, "limit": limit}
-    if inspection_type:
-        query_params["inspection_type"] = inspection_type
-    if event_type:
-        query_params["event_type"] = event_type
-    if vessel_id:
-        query_params["vessel_id"] = vessel_id
-    if status:
-        query_params["status"] = status
-    if assignment_id:
-        query_params["assignment_id"] = assignment_id
-    
-    event = await lambda_to_fastapi_response(request, query_params=query_params)
-    result = list_inspector_defects_handler(event, None)
-    return parse_lambda_response(result)
-
-@inspector_defect_router.get("/statistics/fleet", summary="Get Inspector Fleet Statistics")
-async def get_inspector_fleet_statistics_route(
-    request: Request,
-    tenant_ctx = Depends(require_role("inspector")),
-):
-    """Get aggregated fleet statistics for inspector's assigned vessels."""
-    event = await lambda_to_fastapi_response(request)
-    result = get_inspector_fleet_statistics_handler(event, None)
-    return parse_lambda_response(result)
-
-
-@inspector_defect_router.get("/vessels/statistics", summary="Get Inspector Vessels with Statistics")
-async def get_inspector_vessels_with_statistics_route(
-    request: Request,
-    type: str = Query("vessel_defect", description="Statistics type: vessel_defect, near_miss, third_party, internal_inspection"),
-    tenant_ctx = Depends(require_role("inspector")),
-):
-    """Get all vessels assigned to inspector with pre-calculated statistics."""
-    event = await lambda_to_fastapi_response(request)
-    event["queryStringParameters"] = {"type": type}
-    result = get_inspector_vessels_with_statistics_handler(event, None)
-    return parse_lambda_response(result)
-@inspector_defect_router.get("/{vessel_id}/{defect_id}", summary="Get Defect by ID")
-async def get_inspector_defect_route(
-    vessel_id: str,
-    defect_id: str, 
-    request: Request,
-    tenant_ctx = Depends(require_role("inspector")),
-):
-    """Get a single defect by ID for inspector."""
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "defect_id": defect_id})
-    result = get_defect_handler(event, None)
-    return parse_lambda_response(result)
-
-@inspector_defect_router.put("/{vessel_id}/{defect_id}", summary="Update Defect (Inspector)")
-async def inspector_update_defect_route(
-    vessel_id: str, 
-    defect_id: str, 
-    request: Request, 
-    tenant_ctx = Depends(require_role("admin", "inspector")), 
-    authorization: Optional[str] = Header(None)
-):
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "defect_id": defect_id})
-    result = update_defect_handler(event, None)
-    return parse_lambda_response(result)
-
-@inspector_defect_router.post("/{vessel_id}/{defect_id}/analysis", summary="Add Defect Analysis (Inspector)")
-async def add_inspector_defect_analysis_route(vessel_id: str, defect_id: str, request: Request, tenant_ctx = Depends(require_role("admin","inspector")), authorization: Optional[str] = Header(None)):
-    """Add or update defect analysis for a defect by the authenticated inspector."""  
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "defect_id": defect_id})
-    result = add_inspector_defect_analysis_handler(event, None)
-    return parse_lambda_response(result)
-
-@inspector_defect_router.post("/{vessel_id}/{defect_id}/comments", summary="Add Defect Comment")
-async def inpector_defect_comment_route(vessel_id: str, defect_id: str, request: Request, tenant_ctx = Depends(require_role("admin","inspector")), authorization: Optional[str] = Header(None)):
-    """Add inspector comment to defect."""
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "defect_id": defect_id})
-    result = inspector_comment_handler(event, None)
-    return parse_lambda_response(result)
-
-@inspector_defect_router.post("/{vessel_id}/{defect_id}/rca/start")
-async def inspector_rca_start_route(
-    vessel_id: str,
-    defect_id: str,
-    request: Request,
-    tenant_ctx = Depends(require_role("admin", "inspector")),
-    authorization: Optional[str] = Header(None)
-):
-    """
-    Start RCA analysis - returns first Why question
-    """
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "defect_id": defect_id})
-    result = start_rca_analysis_handler(event, None)
-    return parse_lambda_response(result)
-
-
-@inspector_defect_router.post("/{vessel_id}/{defect_id}/rca/next")
-async def inspector_rca_next_route(
-    vessel_id: str,
-    defect_id: str,
-    request: Request,
-    tenant_ctx = Depends(require_role("admin", "inspector")),
-    authorization: Optional[str] = Header(None)
-):
-    """
-    Process next question in RCA analysis
-    Request body: { "conversation": [...] }
-    """
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "defect_id": defect_id})
-    result = next_rca_question_handler(event, None)
-    return parse_lambda_response(result)
-
-
-@inspector_defect_router.post("/{vessel_id}/{defect_id}/rca/complete")
-async def inspector_rca_complete_route(
-    vessel_id: str,
-    defect_id: str,
-    request: Request,
-    tenant_ctx = Depends(require_role("admin", "inspector")),
-    authorization: Optional[str] = Header(None)
-):
-    """
-    Complete RCA analysis and generate final results
-    Request body: { "conversation": [...] }
-    """
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "defect_id": defect_id})
-    result = complete_rca_analysis_handler(event, None)
-    return parse_lambda_response(result)
-# Add these to inspector_defect_router in your local code:
-
-@inspector_defect_router.get("/download/pdf/{vessel_id}", summary="Download Inspector Defect Report (PDF)")
-async def download_inspector_defect_pdf_route(
-    vessel_id: str,
-    request: Request,
-    start_date: Optional[str] = Query(None),
-    end_date: Optional[str] = Query(None),
-    inspection_type: Optional[str] = Query(None),
-    event_type: Optional[str] = Query(None),
-    include_all: bool = Query(False),
-    assignment_id: Optional[str] = Query(None),
-    tenant_ctx = Depends(require_role("admin", "inspector")),
-    authorization: Optional[str] = Header(None)
-):
-    """Inspector defect download report as PDF with date range filters."""
-    query_params = {}
-    if start_date:
-        query_params["start_date"] = start_date
-    if end_date:
-        query_params["end_date"] = end_date
-    if inspection_type:
-        query_params["inspection_type"] = inspection_type
-    if event_type:
-        query_params["event_type"] = event_type
-    if include_all:
-        query_params["include_all"] = "true"
-    if assignment_id:
-        query_params["assignment_id"] = assignment_id
-    
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id}, query_params=query_params)
-    result = download_inspector_defect_reports_handler(event, None)
-    return parse_lambda_response(result)
-
-
-@inspector_defect_router.get("/download/excel/{vessel_id}", summary="Download Inspector Defect Report (Excel)")
-async def download_inspector_defect_excel_route(
-    vessel_id: str,
-    request: Request,
-    start_date: Optional[str] = Query(None),
-    end_date: Optional[str] = Query(None),
-    inspection_type: Optional[str] = Query(None),
-    event_type: Optional[str] = Query(None),
-    include_all: bool = Query(False),
-    assignment_id: Optional[str] = Query(None),
-    tenant_ctx = Depends(require_role("admin", "inspector")),
-    authorization: Optional[str] = Header(None)
-):
-    """Inspector defect download report as Excel with date range filters."""
-    query_params = {}
-    if start_date:
-        query_params["start_date"] = start_date
-    if end_date:
-        query_params["end_date"] = end_date
-    if inspection_type:
-        query_params["inspection_type"] = inspection_type
-    if event_type:
-        query_params["event_type"] = event_type
-    if include_all:
-        query_params["include_all"] = "true"
-    if assignment_id:
-        query_params["assignment_id"] = assignment_id
-    
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id}, query_params=query_params)
-    result = download_inspector_defect_excel_handler(event, None)
-    return parse_lambda_response(result)
-
-@inspector_defect_router.post("/{vessel_id}/{defect_id}/review", summary="Review Defect")
-async def inspector_defect_review_route(
-    vessel_id: str,
-    defect_id: str,
-    request: Request,
-    tenant_ctx=Depends(require_role("admin", "inspector")),
-    authorization: Optional[str] = Header(None),
-):
-    """Inspector sends a reviewed defect to admin or returns it to crew."""
-    event = await lambda_to_fastapi_response(
-        request,
-        path_params={"vessel_id": vessel_id, "defect_id": defect_id},
-    )
-    result = review_defect_by_inspector_handler(event, None)
-    return parse_lambda_response(result)
-
-@inspector_defect_router.post(
-    "/{vessel_id}/{defect_id}/extension-request",
-    summary="Request Defect Due Date Extension (Inspector)",
-)
-async def request_inspector_defect_extension_route(
-    vessel_id: str,
-    defect_id: str,
-    request: Request,
-    tenant_ctx=Depends(require_role("admin", "inspector")),
-    authorization: Optional[str] = Header(None),
-):
-    """Inspector requests a due date extension for a defect."""
-    event = await lambda_to_fastapi_response(
-        request,
-        path_params={"vessel_id": vessel_id, "defect_id": defect_id},
-    )
-    result = request_inspector_extension_handler(event, None)
-    return parse_lambda_response(result)
-# ============================================================================
-# CREW DEFECT ROUTES
-# ============================================================================
-crew_defect_router = APIRouter(prefix="/crew/defects", tags=["Crew - Defects"])
-
-@crew_defect_router.post("", summary="Create Defect (Crew)")
-async def create_crew_defect_route(request: Request, tenant_ctx = Depends(require_role("admin","crew")), authorization: Optional[str] = Header(None)):
-    """Crew creates a new defect from the mobile app."""
-    event = await lambda_to_fastapi_response(request)
-    result = create_crew_defect_handler(event, None)
-    return parse_lambda_response(result)
-
-@crew_defect_router.get("", summary="List Crew Defects")
-async def list_crew_defects_route(
-    request: Request,
-    page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
-    inspection_type: Optional[str] = Query(None, description="Filter by inspection type"),
-    event_type: Optional[str] = Query(None, description="Filter by event type"),
-    vessel_id: Optional[str] = Query(None, description="Filter by vessel ID"),
-    status: Optional[str] = Query(None, description="Filter by status"),
-    assignment_id: Optional[str] = Query(None, description="Filter by assignment ID"),
-    tenant_ctx = Depends(require_role("admin", "crew")),
-    authorization: Optional[str] = Header(None),
-):
-    """List defects raised by the authenticated crew member with filters."""
-    query_params = {"page": page, "limit": limit}
-    if inspection_type:
-        query_params["inspection_type"] = inspection_type
-    if event_type:
-        query_params["event_type"] = event_type
-    if vessel_id:
-        query_params["vessel_id"] = vessel_id
-    if status:
-        query_params["status"] = status
-    if assignment_id:
-        query_params["assignment_id"] = assignment_id
-    
-    event = await lambda_to_fastapi_response(request, query_params=query_params)
-    result = list_crew_defects_handler(event, None)
-    return parse_lambda_response(result)
-
-@crew_defect_router.get("/statistics/fleet", summary="Get Crew Fleet Statistics")
-async def get_crew_fleet_statistics_route(
-    request: Request,
-    tenant_ctx = Depends(require_role("crew")),
-):
-    """Get aggregated fleet statistics for crew member's assigned vessels."""
-    event = await lambda_to_fastapi_response(request)
-    result = get_crew_fleet_statistics_handler(event, None)
-    return parse_lambda_response(result)
-
-
-@crew_defect_router.get("/vessels/statistics", summary="Get Crew Vessels with Statistics")
-async def get_crew_vessels_with_statistics_route(
-    request: Request,
-    type: str = Query("vessel_defect", description="Statistics type: vessel_defect, near_miss, third_party, internal_inspection"),
-    tenant_ctx = Depends(require_role("crew")),
-):
-    """Get all vessels assigned to crew member with pre-calculated statistics."""
-    event = await lambda_to_fastapi_response(request)
-    event["queryStringParameters"] = {"type": type}
-    result = get_crew_vessels_with_statistics_handler(event, None)
-    return parse_lambda_response(result)
-
-@crew_defect_router.get("/{vessel_id}/{defect_id}", summary="Get Defect by ID")
-async def get_crew_defect_route(
-    vessel_id: str,
-    defect_id: str,
-    request: Request,
-    tenant_ctx = Depends(require_role("crew")),
-):
-    """Get a single defect by ID for crew."""
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "defect_id": defect_id})
-    result = get_defect_handler(event, None)
-    return parse_lambda_response(result)
-
-@crew_defect_router.put("/{vessel_id}/{defect_id}", summary="Update Defect (Crew)")
-async def crew_update_defect_route(
-    vessel_id: str, 
-    defect_id: str, 
-    request: Request, 
-    tenant_ctx = Depends(require_role("admin", "crew")), 
-    authorization: Optional[str] = Header(None)
-):
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "defect_id": defect_id})
-    result = update_defect_handler(event, None)
-    return parse_lambda_response(result)
-
-# Added missing crew defect comment route
-@crew_defect_router.post("/{vessel_id}/{defect_id}/comments", summary="Add Defect Comment (Crew)")
-async def crew_defect_comment_route(
-    vessel_id: str,
-    defect_id: str,
-    request: Request,
-    tenant_ctx=Depends(require_role("crew")),
-    authorization: Optional[str] = Header(None),
-):
-    """Add crew comment to defect."""
-    event = await lambda_to_fastapi_response(
-        request, path_params={"vessel_id": vessel_id, "defect_id": defect_id}
-    )
-    result = crew_comment_handler(event, None)
-    return parse_lambda_response(result)
-
-@crew_defect_router.post("/{vessel_id}/{defect_id}/analysis", summary="Add Defect Analysis (Crew)")
-async def add_crew_defect_analysis_route(vessel_id: str, defect_id: str, request: Request, tenant_ctx = Depends(require_role("admin","crew")), authorization: Optional[str] = Header(None)):
-    """Add or update defect analysis for a defect by the authenticated crew member."""
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "defect_id": defect_id})
-    result = add_crew_defect_analysis_handler(event, None)
-    return parse_lambda_response(result)
-
-@crew_defect_router.post("/{vessel_id}/{defect_id}/rca/start", summary="Start RCA Analysis (Crew)")
-async def crew_rca_start_route(
-    vessel_id: str,
-    defect_id: str,
-    request: Request,
-    tenant_ctx = Depends(require_role("admin", "crew")),
-    authorization: Optional[str] = Header(None)
-):
-    """
-    Start RCA analysis - returns first Why question for crew
-    """
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "defect_id": defect_id})
-    result = start_rca_analysis_handler(event, None)
-    return parse_lambda_response(result)
-
-
-@crew_defect_router.post("/{vessel_id}/{defect_id}/rca/next", summary="Process Next RCA Question (Crew)")
-async def crew_rca_next_route(
-    vessel_id: str,
-    defect_id: str,
-    request: Request,
-    tenant_ctx = Depends(require_role("admin", "crew")),
-    authorization: Optional[str] = Header(None)
-):
-    """
-    Process next question in RCA analysis for crew
-    Request body: { "conversation": [...] }
-    """
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "defect_id": defect_id})
-    result = next_rca_question_handler(event, None)
-    return parse_lambda_response(result)
-
-
-@crew_defect_router.post("/{vessel_id}/{defect_id}/rca/complete", summary="Complete RCA Analysis (Crew)")
-async def crew_rca_complete_route(
-    vessel_id: str,
-    defect_id: str,
-    request: Request,
-    tenant_ctx = Depends(require_role("admin", "crew")),
-    authorization: Optional[str] = Header(None)
-):
-    """
-    Complete RCA analysis and generate final results for crew
-    Request body: { "conversation": [...] }
-    """
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id, "defect_id": defect_id})
-    result = complete_rca_analysis_handler(event, None)
-    return parse_lambda_response(result)
-# Add these to crew_defect_router in your local code:
-
-@crew_defect_router.get("/download/pdf/{vessel_id}", summary="Download Crew Defect Report (PDF)")
-async def download_crew_defect_pdf_route(
-    vessel_id: str,
-    request: Request,
-    start_date: Optional[str] = Query(None),
-    end_date: Optional[str] = Query(None),
-    inspection_type: Optional[str] = Query(None),
-    event_type: Optional[str] = Query(None),
-    include_all: bool = Query(False),
-    assignment_id: Optional[str] = Query(None),
-    tenant_ctx = Depends(require_role("admin", "crew")),
-    authorization: Optional[str] = Header(None)
-):
-    """Crew defect download report as PDF with date range filters."""
-    query_params = {}
-    if start_date:
-        query_params["start_date"] = start_date
-    if end_date:
-        query_params["end_date"] = end_date
-    if inspection_type:
-        query_params["inspection_type"] = inspection_type
-    if event_type:
-        query_params["event_type"] = event_type
-    if include_all:
-        query_params["include_all"] = "true"
-    if assignment_id:
-        query_params["assignment_id"] = assignment_id
-    
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id}, query_params=query_params)
-    result = download_crew_defect_reports_handler(event, None)
-    return parse_lambda_response(result)
-
-
-@crew_defect_router.get("/download/excel/{vessel_id}", summary="Download Crew Defect Report (Excel)")
-async def download_crew_defect_excel_route(
-    vessel_id: str,
-    request: Request,
-    start_date: Optional[str] = Query(None),
-    end_date: Optional[str] = Query(None),
-    inspection_type: Optional[str] = Query(None),
-    event_type: Optional[str] = Query(None),
-    include_all: bool = Query(False),
-    assignment_id: Optional[str] = Query(None),
-    tenant_ctx = Depends(require_role("admin", "crew")),
-    authorization: Optional[str] = Header(None)
-):
-    """Crew defect download report as Excel with date range filters."""
-    query_params = {}
-    if start_date:
-        query_params["start_date"] = start_date
-    if end_date:
-        query_params["end_date"] = end_date
-    if inspection_type:
-        query_params["inspection_type"] = inspection_type
-    if event_type:
-        query_params["event_type"] = event_type
-    if include_all:
-        query_params["include_all"] = "true"
-    if assignment_id:
-        query_params["assignment_id"] = assignment_id
-    
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id}, query_params=query_params)
-    result = download_crew_defect_excel_handler(event, None)
-    return parse_lambda_response(result)
-
-@crew_defect_router.post(
-    "/{vessel_id}/{defect_id}/extension-request",
-    summary="Request Defect Due Date Extension (Crew)",
-)
-async def request_crew_defect_extension_route(
-    vessel_id: str,
-    defect_id: str,
-    request: Request,
-    tenant_ctx=Depends(require_role("crew")),
-    authorization: Optional[str] = Header(None),
-):
-    """Crew requests a due date extension for a defect."""
-    event = await lambda_to_fastapi_response(
-        request,
-        path_params={"vessel_id": vessel_id, "defect_id": defect_id},
-    )
-    result = request_crew_extension_handler(event, None)
-    return parse_lambda_response(result)
-# ============================================================================
-# UPLOAD ROUTES
-# ============================================================================
-upload_router = APIRouter(prefix="/uploads", tags=["File Upload"])
-
-@upload_router.post("/presign", summary="Get Presigned Upload URL")
-async def presign_upload_route(request: Request, tenant_ctx = Depends(require_role("admin","inspector","crew")), authorization: Optional[str] = Header(None)):
-    """Get a presigned URL for uploading files to S3."""
-    event = await lambda_to_fastapi_response(request)
-    result = presign_upload_handler(event, None)
-    return parse_lambda_response(result)
-
-# ============================================================================
-# DASHBOARD ROUTES
-# ============================================================================
-dashboard_router = APIRouter(prefix="/admin/dashboard", tags=["Admin - Dashboard"])
-
-@dashboard_router.get("", summary="Get Admin Dashboard")
-async def get_dashboard_route(request: Request, tenant_ctx = Depends(require_role("admin")), authorization: Optional[str] = Header(None)):
-    """Get dashboard data for the authenticated admin."""
-    event = await lambda_to_fastapi_response(request)
-    result = get_dashboard_handler(event, None)
-    return parse_lambda_response(result)
-
-# ============================================================================
-# NOTIFICATIONS ROUTES
-# ============================================================================
-notifications_router = APIRouter(prefix="/notifications", tags=["Admin - Notifications"])
-
-@notifications_router.get("", summary="Get notifications")
-async def get_notifications_route(
-    request: Request,
-    tenant_ctx=Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None)
-):
-    """Get notifications for the authenticated admin."""
-    event = await lambda_to_fastapi_response(request)
-    result = list_notifications_handler(event, None)
-    return parse_lambda_response(result)
-
-@notifications_router.get("/unread-count", summary="Get unread notifications count")
-async def get_unread_count_route(
-    request: Request,
-    tenant_ctx=Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None)
-):
-    """Get unread notifications count for the authenticated admin."""
-    event = await lambda_to_fastapi_response(request)
-    result = get_unread_count_handler(event, None)
-    return parse_lambda_response(result)
-
-@notifications_router.get("/{notification_id}", summary="Get notification by ID")
-async def get_notification_route(
-    request: Request,
-    notification_id: str,
-    tenant_ctx=Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None)
-):
-    """Get a specific notification by ID."""
-    event = await lambda_to_fastapi_response(request)
-    result = get_notification_handler(event, None)
-    return parse_lambda_response(result)
-
-@notifications_router.post("", summary="Create notification")
-async def create_notification_route(
-    request: Request,
-    tenant_ctx=Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None)
-):
-    """Create a new notification (admin only)."""
-    event = await lambda_to_fastapi_response(request)
-    result = create_notification_handler(event, None)
-    return parse_lambda_response(result)
-
-@notifications_router.put("/{notification_id}", summary="Update notification")
-async def update_notification_route(
-    request: Request,
-    notification_id: str,
-    tenant_ctx=Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None)
-):
-    """Update a notification by ID (admin only)."""
-    event = await lambda_to_fastapi_response(request)
-    result = update_notification_handler(event, None)
-    return parse_lambda_response(result)
-
-@notifications_router.delete("/{notification_id}", summary="Delete notification")
-async def delete_notification_route(
-    request: Request,
-    notification_id: str,
-    tenant_ctx=Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None)
-):
-    """Delete a notification by ID (admin only)."""
-    event = await lambda_to_fastapi_response(request)
-    result = delete_notification_handler(event, None)
-    return parse_lambda_response(result)
-
-@notifications_router.post("/{notification_id}/read", summary="Mark notification as read")
-async def mark_notification_read_route(
-    request: Request,
-    notification_id: str,
-    tenant_ctx=Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None)
-):
-    """Mark a specific notification as read."""
-    event = await lambda_to_fastapi_response(request)
-    result = mark_notification_read_handler(event, None)
-    return parse_lambda_response(result)
-
-@notifications_router.post("/mark-read", summary="Mark multiple notifications as read")
-async def mark_multiple_notifications_read_route(
-    request: Request,
-    tenant_ctx=Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None)
-):
-    """Mark multiple notifications as read."""
-    event = await lambda_to_fastapi_response(request)
-    result = mark_multiple_notifications_read_handler(event, None)
-    return parse_lambda_response(result)
-
-@notifications_router.post("/mark-all-read", summary="Mark all notifications as read")
-async def mark_all_notifications_read_route(
-    request: Request,
-    tenant_ctx=Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None)
-):
-    """Mark all notifications as read for the current user."""
-    event = await lambda_to_fastapi_response(request)
-    result = mark_all_notifications_read_handler(event, None)
-    return parse_lambda_response(result)
-
-# ============================================================================
-# Recurring Inspection ROUTES
-# ============================================================================
-recurring_inspection_router = APIRouter(prefix="/admin/recurring-inspections", tags=["Admin - Recurring Inspections"])
-
-@recurring_inspection_router.post("/trigger", summary="Trigger Recurring Inspections Manually")
-async def trigger_recurring_route(
-    request: Request,
-    tenant_ctx = Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None)
-):
-    """Manually trigger recurring inspection scheduler to create new assignments for due forms."""
-    event = await lambda_to_fastapi_response(request)
-    result = trigger_recurring_inspections_handler(event, None)
-    return parse_lambda_response(result)
-
-# ============================================================================
-# SYSTEM LOGS MANAGEMENT ROUTES
-# ============================================================================
-system_logs_router = APIRouter(prefix="/system-logs", tags=["System Logs Management"])
-
-@system_logs_router.post("", summary="Create System Log")
-async def create_system_log_route(
-    request: Request,
-    tenant_ctx = Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None)
-):
-    """Create a new system log (admin only)."""
-    print("hitted----------------------------")
-    event = await lambda_to_fastapi_response(request)
-    result = create_system_log_handler(event, None)
-    return parse_lambda_response(result)
-
-@system_logs_router.get("", summary="List System Logs")
-async def list_system_logs_route(
-    request: Request,
-    tenant_ctx = Depends(require_role("admin")),
-    page: int = Query(1),
-    limit: int = Query(20),
-    authorization: Optional[str] = Header(None)
-):
-    """List all system logs for the authenticated admin with pagination."""
-    event = await lambda_to_fastapi_response(request, query_params={"page": str(page), "limit": str(limit)})
-    result = list_system_logs_handler(event, None)
-    return parse_lambda_response(result)
-
-@system_logs_router.get("/{log_id}", summary="Get System Log")
-async def get_system_log_route(
-    log_id: str,
-    request: Request,
-    tenant_ctx = Depends(require_role("admin"))
-):
-    """Get a single system log by ID."""
-    event = await lambda_to_fastapi_response(request, path_params={"log_id": log_id})
-    result = get_system_log_handler(event, None)
-    return parse_lambda_response(result)
-
-@system_logs_router.patch("/{log_id}/status", summary="Update System Log Status")
-async def update_system_log_status_route(
-    log_id: str,
-    request: Request,
-    tenant_ctx = Depends(require_role("admin"))
-):
-    """Update system log status (admin only)."""
-    event = await lambda_to_fastapi_response(request, path_params={"log_id": log_id})
-    result = update_system_log_status_handler(event, None)
-    return parse_lambda_response(result)
-
-@system_logs_router.patch("/{log_id}/priority", summary="Update System Log Priority")
-async def update_system_log_priority_route(
-    log_id: str,
-    request: Request,
-    tenant_ctx = Depends(require_role("admin"))
-):
-    """Update system log priority (admin only)."""
-    event = await lambda_to_fastapi_response(request, path_params={"log_id": log_id})
-    result = update_system_log_priority_handler(event, None)
-    return parse_lambda_response(result)
-
-# ============================================================================
-# Company specific Notifications ROUTES
-# ============================================================================
-company_notifications_router = APIRouter(prefix="/company-notifications", tags=["Company Notifications"])
-
-@company_notifications_router.get("")
-async def get_my_notifications(
-    request: Request,
-    page: int = 1,
-    limit: int = 20,
-    tenant_ctx=Depends(require_role("admin", "inspector", "crew")),
-    authorization: Optional[str] = Header(None)
-):
-    """
-    Get notifications based on user type:
-    - Admin: Gets ALL notifications (no filtering)
-    - Inspector: Gets ADMIN notifications where they are in recipients or ALL
-    - Crew: Gets ADMIN notifications where they are in recipients or ALL
-    """
-    # Add query params to request
-    request.scope["query_string"] = f"page={page}&limit={limit}".encode()
-    event = await lambda_to_fastapi_response(request)
-    result = list_company_notifications_handler(event, None)
-    return parse_lambda_response(result)
-
-@company_notifications_router.get("/unread-count")
-async def get_unread_count(
-    request: Request,
-    tenant_ctx=Depends(require_role("admin", "inspector", "crew")),
-    authorization: Optional[str] = Header(None)
-):
-    """Get unread notifications count for the authenticated user."""
-    event = await lambda_to_fastapi_response(request)
-    result = get_company_unread_count_handler(event, None)
-    return parse_lambda_response(result)
-
-@company_notifications_router.get("/{notification_id}")
-async def get_notification_by_id(
-    request: Request,
-    notification_id: str,
-    tenant_ctx=Depends(require_role("admin", "inspector", "crew")),
-    authorization: Optional[str] = Header(None)
-):
-    """Get a specific notification by ID with access control based on user type."""
-    # Add path param to request
-    request.scope["path_parameters"] = {"notification_id": notification_id}
-    event = await lambda_to_fastapi_response(request)
-    result = get_company_notification_handler(event, None)
-    return parse_lambda_response(result)
-
-@company_notifications_router.post("")
-async def create_notification(
-    request: Request,
-    tenant_ctx=Depends(require_role("admin", "inspector", "crew")),
-    authorization: Optional[str] = Header(None)
-):
-    """Create a new notification. All users can create notifications."""
-    event = await lambda_to_fastapi_response(request)
-    result = create_company_notification_handler(event, None)
-    return parse_lambda_response(result)
-
-@company_notifications_router.put("/{notification_id}")
-async def update_notification(
-    request: Request,
-    notification_id: str,
-    tenant_ctx=Depends(require_role("admin", "inspector", "crew")),
-    authorization: Optional[str] = Header(None)
-):
-    """Update a notification by ID (only creator can update)."""
-    # Add path param to request
-    request.scope["path_parameters"] = {"notification_id": notification_id}
-    event = await lambda_to_fastapi_response(request)
-    result = update_company_notification_handler(event, None)
-    return parse_lambda_response(result)
-
-@company_notifications_router.delete("/{notification_id}")
-async def delete_notification(
-    request: Request,
-    notification_id: str,
-    tenant_ctx=Depends(require_role("admin", "inspector", "crew")),
-    authorization: Optional[str] = Header(None)
-):
-    """Delete a notification by ID (only creator can delete)."""
-    # Add path param to request
-    request.scope["path_parameters"] = {"notification_id": notification_id}
-    event = await lambda_to_fastapi_response(request)
-    result = delete_company_notification_handler(event, None)
-    return parse_lambda_response(result)
-
-@company_notifications_router.post("/{notification_id}/read")
-async def mark_notification_read(
-    request: Request,
-    notification_id: str,
-    tenant_ctx=Depends(require_role("admin", "inspector", "crew")),
-    authorization: Optional[str] = Header(None)
-):
-    """Mark a specific notification as read."""
-    # Add path param to request
-    request.scope["path_parameters"] = {"notification_id": notification_id}
-    event = await lambda_to_fastapi_response(request)
-    result = mark_company_notification_read_handler(event, None)
-    return parse_lambda_response(result)
-
-@company_notifications_router.post("/mark-read")
-async def mark_multiple_notifications_read(
-    request: Request,
-    tenant_ctx=Depends(require_role("admin", "inspector", "crew")),
-    authorization: Optional[str] = Header(None)
-):
-    """Mark multiple notifications as read. Send JSON body with notification_ids list."""
-    event = await lambda_to_fastapi_response(request)
-    result = mark_multiple_company_notifications_read_handler(event, None)
-    return parse_lambda_response(result)
-
-@company_notifications_router.post("/mark-all-read")
-async def mark_all_notifications_read(
-    request: Request,
-    tenant_ctx=Depends(require_role("admin", "inspector", "crew")),
-    authorization: Optional[str] = Header(None)
-):
-    """Mark all notifications as read for the current user."""
-    event = await lambda_to_fastapi_response(request)
-    result = mark_all_company_notifications_read_handler(event, None)
-    return parse_lambda_response(result)
-
-# ============================================================================
-# VESSEL CERTIFICATE ROUTES
-# ============================================================================
-certificate_router = APIRouter(prefix="/vessel/{vessel_id}/certificates", tags=["Vessel Certificates"])
-
-@certificate_router.post("", summary="Create Certificate")
-async def create_certificate_route(
-    vessel_id: str,
-    request: Request,
-    tenant_ctx = Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None)
-):
-    """
-    Create a new certificate for a vessel (admin only).
-    Supports multipart/form-data for file uploads.
-    """
-    event = await lambda_to_fastapi_response(request, path_params={"vessel_id": vessel_id})
-    result = create_certificate_handler(event, None)
-    return parse_lambda_response(result)
-
-@certificate_router.get("", summary="List Certificates")
-async def list_certificates_route(
-    vessel_id: str,
-    request: Request,
-    tenant_ctx = Depends(require_role("admin")),
-    category: Optional[str] = Query(None, description="Filter by certificate category"),
-    authorization: Optional[str] = Header(None)
-):
-    """
-    List all certificates for a vessel using PK begins_with pattern.
-    Optionally filter by category.
-    """
-    event = await lambda_to_fastapi_response(
-        request, 
-        path_params={"vessel_id": vessel_id},
-        query_params={"category": category} if category else {}
-    )
-    result = list_certificates_handler(event, None)
-    return parse_lambda_response(result)
-
-@certificate_router.get("/{certificate_id}", summary="Get Certificate")
-async def get_certificate_route(
-    vessel_id: str,
-    certificate_id: str,
-    request: Request,
-    tenant_ctx = Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None)
-):
-    """
-    Get a single certificate by ID.
-    """
-    event = await lambda_to_fastapi_response(
-        request, 
-        path_params={
-            "vessel_id": vessel_id,
-            "certificate_id": certificate_id
-        }
-    )
-    result = get_certificate_handler(event, None)
-    return parse_lambda_response(result)
-
-@certificate_router.put("/{certificate_id}", summary="Update Certificate")
-async def update_certificate_route(
-    vessel_id: str,
-    certificate_id: str,
-    request: Request,
-    tenant_ctx = Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None)
-):
-    """
-    Update an existing certificate (admin only).
-    Supports multipart/form-data for file uploads.
-    """
-    event = await lambda_to_fastapi_response(
-        request, 
-        path_params={
-            "vessel_id": vessel_id,
-            "certificate_id": certificate_id
-        }
-    )
-    result = update_certificate_handler(event, None)
-    return parse_lambda_response(result)
-
-@certificate_router.delete("/{certificate_id}", summary="Delete Certificate")
-async def delete_certificate_route(
-    vessel_id: str,
-    certificate_id: str,
-    request: Request,
-    tenant_ctx = Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None)
-):
-    """
-    Delete a certificate and its associated files from S3 (admin only).
-    """
-    event = await lambda_to_fastapi_response(
-        request, 
-        path_params={
-            "vessel_id": vessel_id,
-            "certificate_id": certificate_id
-        }
-    )
-    result = delete_certificate_handler(event, None)
-    return parse_lambda_response(result)
-
-incident_router = APIRouter(prefix="/incidents", tags=["Incident Investigation"])
-
-@incident_router.get("/vessels/dropdown", summary="Get Vessels for Dropdown")
-async def get_vessels_for_dropdown_route(
-    request: Request,
-    tenant_ctx = Depends(require_role("crew", "admin", "inspector")),
-    authorization: Optional[str] = Header(None)
-):
-    """Get all active vessels for dropdown selection."""
-    event = await lambda_to_fastapi_response(request)
-    result = get_vessels_for_dropdown_handler(event, None)
-    return parse_lambda_response(result)
-
-
-@incident_router.post("", summary="Create Incident (Flash Report)")
-async def create_incident_route(
-    request: Request,
-    tenant_ctx = Depends(require_role("crew", "admin")),
-    authorization: Optional[str] = Header(None)
-):
-    event = await lambda_to_fastapi_response(request)
-    result = create_incident_handler(event, None)
-    return parse_lambda_response(result)
-
-
-@incident_router.get("/vessel/{vessel_id}", summary="List Incidents by Vessel")
-async def list_incidents_by_vessel_route(
-    vessel_id: str,
-    request: Request,
-    page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
-    tenant_ctx = Depends(require_role("crew", "admin", "inspector")),
-    authorization: Optional[str] = Header(None)
-):
-    event = await lambda_to_fastapi_response(
-        request,
-        path_params={"vessel_id": vessel_id},
-        query_params={"page": str(page), "limit": str(limit)}
-    )
-    result = list_incidents_by_vessel_handler(event, None)
-    return parse_lambda_response(result)
-
-
-@incident_router.get("/stats/vessel/{vessel_id}", summary="Get Vessel Incident Stats")
-async def get_vessel_incident_stats_route(
-    vessel_id: str,
-    request: Request,
-    tenant_ctx = Depends(require_role("crew", "admin", "inspector")),
-    authorization: Optional[str] = Header(None)
-):
-    event = await lambda_to_fastapi_response(
-        request,
-        path_params={"vessel_id": vessel_id}
-    )
-    result = get_vessel_incident_stats_handler(event, None)
-    return parse_lambda_response(result)
-
-
-@incident_router.get("/stats/fleet", summary="Get Fleet Incident Stats")
-async def get_fleet_incident_stats_route(
-    request: Request,
-    tenant_ctx = Depends(require_role("admin", "crew", "inspector")),
-    authorization: Optional[str] = Header(None)
-):
-    event = await lambda_to_fastapi_response(request)
-    result = get_fleet_incident_stats_handler(event, None)
-    return parse_lambda_response(result)
-
-
-@incident_router.put("/{vessel_id}/{incident_id}", summary="Update Incident")
-async def update_incident_route(
-    vessel_id: str,
-    incident_id: str,
-    request: Request,
-    tenant_ctx = Depends(require_role("crew", "admin","inspector")),
-    authorization: Optional[str] = Header(None)
-):
-    event = await lambda_to_fastapi_response(
-        request,
-        path_params={"vessel_id": vessel_id, "incident_id": incident_id}
-    )
-    result = update_incident_handler(event, None)
-    return parse_lambda_response(result)
-
-
-@incident_router.get("/{vessel_id}/{incident_id}", summary="Get Incident")
-async def get_incident_route(
-    vessel_id: str,
-    incident_id: str,
-    request: Request,
-    tenant_ctx = Depends(require_role("crew", "admin", "inspector")),
-    authorization: Optional[str] = Header(None)
-):
-    event = await lambda_to_fastapi_response(
-        request,
-        path_params={"vessel_id": vessel_id, "incident_id": incident_id}
-    )
-    result = get_incident_handler(event, None)
-    return parse_lambda_response(result)
-
-
-@incident_router.delete("/{vessel_id}/{incident_id}", summary="Delete Incident")
-async def delete_incident_route(
-    vessel_id: str,
-    incident_id: str,
-    request: Request,
-    tenant_ctx = Depends(require_role("admin")),
-    authorization: Optional[str] = Header(None)
-):
-    event = await lambda_to_fastapi_response(
-        request,
-        path_params={"vessel_id": vessel_id, "incident_id": incident_id}
-    )
-    result = delete_incident_handler(event, None)
-    return parse_lambda_response(result)
-
-@incident_router.get("/{vessel_id}/{incident_id}/export", summary="Export Incident as PDF")
-async def export_incident_pdf_route(
-    vessel_id: str,
-    incident_id: str,
-    request: Request,
-    tenant_ctx = Depends(require_role("crew", "admin", "inspector")),
-    authorization: Optional[str] = Header(None)
-):
-    event = await lambda_to_fastapi_response(
-        request,
-        path_params={"vessel_id": vessel_id, "incident_id": incident_id}
-    )
-    result = export_incident_pdf_handler(event, None)
-    
-    if result.get("statusCode") == 200:
-        return Response(
-            content=base64.b64decode(result["body"]),
-            media_type="application/pdf",
-            headers={"Content-Disposition": f'attachment; filename="incident_report_{incident_id}.pdf"'}
-        )
-    return parse_lambda_response(result)
-# ============================================================================
-# INCLUDE ALL ROUTERS IN MAIN API ROUTER
-# ============================================================================
-api_router.include_router(inspector_router)
-api_router.include_router(admin_admin_router)
-api_router.include_router(inspector_me_router)
-api_router.include_router(admin_router)
-api_router.include_router(admin_profile_router)
-api_router.include_router(admin_inspector_router)
-api_router.include_router(vessel_router)
-api_router.include_router(crew_defect_router)
-api_router.include_router(crew_router)
-api_router.include_router(crew_form_router)  # Added missing router
-api_router.include_router(admin_crew_router)
-api_router.include_router(form_router)
-api_router.include_router(inspector_form_router)
-api_router.include_router(admin_form_router)
-api_router.include_router(assignment_router)
-api_router.include_router(inspector_assignment_router)
-api_router.include_router(admin_defect_router)
-api_router.include_router(inspector_defect_router)
-api_router.include_router(upload_router)
-api_router.include_router(dashboard_router)
-api_router.include_router(notifications_router)
-api_router.include_router(recurring_inspection_router)
-api_router.include_router(system_logs_router)
-api_router.include_router(company_notifications_router)
-api_router.include_router(certificate_router)
-api_router.include_router(incident_router)
+  };
+
+  if ((isLoadingVessels || isLoadingStats) && !activeVesselId) {
+    return (
+      <div className="mx-auto min-h-screen max-w-[1600px] bg-slate-50 p-6 text-slate-800">
+        <div className="mb-6 flex flex-col justify-between gap-3 md:flex-row md:items-end">
+          <div className="space-y-2">
+            <SkeletonBlock className="h-6 w-64" />
+            <SkeletonBlock className="h-4 w-72" />
+          </div>
+        </div>
+
+        <div className="mb-6 grid grid-cols-2 gap-6 md:grid-cols-5">
+          {Array.from({ length: 5 }).map((_, index) => (
+            <div key={index} className="rounded-lg border border-gray-100 bg-white p-4 shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div className="space-y-2">
+                  <SkeletonBlock className="h-3 w-20" />
+                  <SkeletonBlock className="h-8 w-16" />
+                  <SkeletonBlock className="h-3 w-14" />
+                </div>
+                <SkeletonBlock className="h-4 w-4" />
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="mb-6 flex flex-wrap items-center gap-6">
+          <SkeletonBlock className="h-10 w-full max-w-xs" />
+          <SkeletonBlock className="h-10 w-40" />
+        </div>
+
+        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, index) => (
+            <div key={index} className="overflow-hidden rounded-xl border border-slate-100 bg-white shadow-sm">
+              <div className="p-4">
+                <div className="mb-3 flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <SkeletonBlock className="h-9 w-9 rounded-lg" />
+                    <div className="min-w-0 space-y-2">
+                      <SkeletonBlock className="h-4 w-36" />
+                      <SkeletonBlock className="h-3 w-24" />
+                    </div>
+                  </div>
+                  <SkeletonBlock className="h-5 w-5 rounded-full" />
+                </div>
+                <SkeletonBlock className="mb-3 h-5 w-24 rounded-full" />
+                <div className="border-t border-slate-100 pt-3">
+                  {Array.from({ length: 2 }).map((__, rowIndex) => (
+                    <div key={rowIndex} className="flex items-center justify-between py-2">
+                      <SkeletonBlock className="h-3 w-24" />
+                      <SkeletonBlock className="h-3 w-16" />
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-3 border-t border-slate-100 pt-2">
+                  <SkeletonBlock className="h-4 w-20" />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto min-h-screen max-w-[1600px] bg-slate-50 p-6 text-slate-800">
+      <div className="mb-6 flex flex-col justify-between gap-3 md:flex-row md:items-end">
+        <div>
+          <h1 className="text-xl font-black tracking-tight text-slate-900">Third Party Findings</h1>
+          <p className="mt-0.5 text-xs font-medium text-slate-500">Track third party findings across the fleet</p>
+        </div>
+      </div>
+
+      <div className="mb-6 grid grid-cols-2 gap-6 md:grid-cols-5">
+        <KPIBlock label="Vessels" value={fleetKpis.vessels} subtext="in fleet" icon={<Ship className="h-4 w-4" />} highlightClassName="text-sky-600" />
+        <KPIBlock label="Total findings" value={fleetKpis.total} subtext="all third party types" icon={<ClipboardCheck className="h-4 w-4" />} />
+        <KPIBlock label="Open" value={fleetKpis.open} subtext="unresolved" icon={<AlertTriangle className="h-4 w-4" />} highlightClassName="text-amber-600" />
+        <KPIBlock label="Overdue" value={fleetKpis.overdue} subtext="past due" icon={<AlertTriangle className="h-4 w-4" />} highlightClassName="text-red-600" />
+        <KPIBlock label="Closed" value={fleetKpis.closed} subtext="resolved" icon={<CheckCircle className="h-4 w-4" />} highlightClassName="text-emerald-600" />
+      </div>
+
+      {!activeVesselId ? (
+        <>
+          <div className="mb-6 flex flex-wrap items-center gap-6">
+            <div className="relative w-full max-w-xs">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search vessel..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-4 text-sm font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500"
+              />
+            </div>
+
+            <div className="relative">
+              <Ship className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <select
+                value={typeFilter}
+                onChange={(e) => setTypeFilter(e.target.value)}
+                className="appearance-none rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-9 text-sm font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500"
+              >
+                <option value="all">All vessel types</option>
+                {vesselTypes.map((type) => (
+                  <option key={type} value={type}>
+                    {type}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            </div>
+          </div>
+
+          {filteredVessels.length === 0 ? (
+            <div className="rounded-xl border border-slate-200 bg-white p-16 text-center shadow-sm">
+              <ClipboardCheck className="mx-auto mb-3 h-12 w-12 text-slate-300" />
+              <p className="text-sm font-medium text-slate-400">No third party inspections match the current filters.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+              {filteredVessels.map((vessel) => (
+                <VesselCard key={vessel.vessel_id} vessel={vessel} onClick={() => handleOpenVessel(vessel)} />
+              ))}
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="space-y-4">
+          <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={handleBack}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 shadow-sm transition-colors hover:bg-slate-50"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                  All vessels
+                </button>
+                <div className="hidden h-5 w-px bg-slate-200 sm:block" />
+                <div className="min-w-0">
+                  <h2 className="truncate text-sm font-extrabold text-slate-900">{activeVesselName}</h2>
+                  <p className="text-[11px] font-medium text-slate-400">{activeVesselType}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <FindingsTable
+            vesselId={activeVesselId}
+            vesselName={activeVesselName}
+            selectedInspectionType={detailInspectionType}
+            onInspectionTypeChange={(value) => {
+              setDetailInspectionType(value);
+              setDetailPage(1);
+              setSelectedDefect(null);
+            }}
+            findings={detailFindings}
+            isLoading={isLoadingDetail}
+            page={detailPage}
+            onPageChange={(nextPage) => setDetailPage(nextPage)}
+            onSelectFinding={handleSelectFinding}
+            onCloseDefect={handleOpenCloseDialog}
+            onDeleteDefect={handleOpenDeleteDialog}
+          />
+        </div>
+      )}
+
+      <DefectActionDialog
+        action={activeAction || "close"}
+        defect={activeActionDefect}
+        isOpen={Boolean(activeAction && activeActionDefect)}
+        isSubmitting={isActionSubmitting}
+        onClose={closeActionDialog}
+        onConfirm={handleConfirmAction}
+      />
+
+      <ActionToast toast={toast} onClose={() => setToast(null)} />
+
+      {selectedDefect && (activeVesselId || selectedDefect.vessel_id) && (
+        <DefectSummaryPanel
+          defect={selectedDefect}
+          vesselId={activeVesselId || selectedDefect.vessel_id || ""}
+          onClose={() => setSelectedDefect(null)}
+        />
+      )}
+    </div>
+  );
+}
